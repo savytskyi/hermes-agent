@@ -148,6 +148,36 @@ def telegram_menu_max_commands() -> int:
     return int(_telegram_command_menu_config()["max_commands"])
 
 
+def _configured_quick_telegram_commands() -> list[tuple[str, str]]:
+    """``(name, description)`` for user-local ``quick_commands`` (exec/alias) in Telegram's menu.
+
+    Quick commands live in ``config.yaml``, not ``COMMAND_REGISTRY``: they are not portable
+    built-ins and must not affect Slack/Discord registration caps, but they are dispatchable on
+    Telegram, so they belong in its slash-command picker."""
+    try:
+        from hermes_cli.config import read_raw_config
+        cfg = read_raw_config()
+    except Exception:
+        return []
+    quick_commands = cfg.get("quick_commands") if isinstance(cfg, Mapping) else None
+    if not isinstance(quick_commands, Mapping):
+        return []
+    entries: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for raw_name, meta in quick_commands.items():
+        if not isinstance(raw_name, str) or not isinstance(meta, Mapping):
+            continue
+        if meta.get("type") not in {"exec", "alias"}:
+            continue
+        tg_name = _sanitize_telegram_name(raw_name)
+        if not tg_name or tg_name in seen:
+            continue
+        description = str(meta.get("description") or f"Run /{tg_name}").strip()
+        entries.append((tg_name, description))
+        seen.add(tg_name)
+    return entries
+
+
 def _sanitized_rank(raw_names: Sequence[str]) -> dict[str, int]:
     """name -> rank for the deduped, Telegram-sanitized *raw_names* (first occurrence wins)."""
     rank: dict[str, int] = {}
@@ -162,17 +192,27 @@ def _prioritize_telegram_menu_candidates(
     candidates: list[tuple[str, str, str, str]]) -> list[tuple[str, str, str, str]]:
     """Order ``(final_name, description, source, raw_name)`` candidates; the default priority
     applies to core only, "replace" mode ignores it. ``raw_name`` is the pre-clamp name so a
-    configured long command stays addressable."""
+    configured long command stays addressable. User ``quick`` commands rank in the default
+    tier right after the operational built-ins (through ``/commands``) so the small visible
+    menu cap never hides them behind lower-priority built-ins, plugins or skills."""
     menu_cfg = _telegram_command_menu_config()
     configured_rank = _sanitized_rank(menu_cfg["priority"])
     default_rank = _sanitized_rank(_TELEGRAM_MENU_PRIORITY)
+    # Fractional rank slots quick commands between /commands and the next built-in.
+    quick_rank = default_rank.get("commands", len(default_rank) - 1) + 0.5
     tiers = _TELEGRAM_PRIORITY_TIERS[menu_cfg["priority_mode"]]
 
-    def _rank(stable_index: int, candidate: tuple[str, str, str, str]) -> tuple[int, int, int]:
+    def _rank(stable_index: int, candidate: tuple[str, str, str, str]) -> tuple[int, float, int]:
         final_name, _desc, source, raw_name = candidate
+        if source == "core":
+            default_index: float | None = default_rank.get(final_name)
+        elif source == "quick":
+            default_index = quick_rank
+        else:
+            default_index = None
         indexes = {
             "configured": configured_rank.get(raw_name, configured_rank.get(final_name)),
-            "default": default_rank.get(final_name) if source == "core" else None}
+            "default": default_index}
         for tier, table in enumerate(tiers):
             if indexes[table] is not None:
                 return (tier, indexes[table], stable_index)
@@ -286,10 +326,14 @@ def telegram_menu_commands(max_commands: int = 100) -> tuple[list[tuple[str, str
     ``platforms.telegram.extra.command_menu.priority`` — applied *before* the cap, so a
     prioritized dynamic command can displace an unprioritized core command."""
     core_commands = list(telegram_bot_commands(include_plugins=False))
+    core_names = {n for n, _ in core_commands}
+    # Built-ins keep precedence on a name clash (dispatch resolves built-ins first too).
+    quick_commands = [(n, d) for n, d in _configured_quick_telegram_commands() if n not in core_names]
     entries, hidden_count = _collect_gateway_skill_entries(
-        platform="telegram", max_slots=None, reserved_names={n for n, _ in core_commands},
+        platform="telegram", max_slots=None, reserved_names=core_names | {n for n, _ in quick_commands},
         desc_limit=40, sanitize_name=_sanitize_telegram_name)
     candidates = [(name, desc, "core", name) for name, desc in core_commands]
+    candidates += [(name, _truncate_desc(desc, 80), "quick", name) for name, desc in quick_commands]
     candidates += [(name, desc, "skill" if cmd_key else "plugin", raw)
                    for name, desc, cmd_key, raw in entries]
     candidates = _prioritize_telegram_menu_candidates(candidates)
