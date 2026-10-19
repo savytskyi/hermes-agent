@@ -177,6 +177,40 @@ class TestDocumentDownloadBlock:
 
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("file_name", ["schedule.html", "schedule.htm"])
+    async def test_supported_html_injects_content(self, adapter, file_name):
+        content = b"<!doctype html><html><body><h1>Movie schedule</h1></body></html>"
+        file_obj = _make_file_obj(content)
+        doc = _make_document(
+            file_name=file_name, mime_type="text/html",
+            file_size=len(content), file_obj=file_obj,
+        )
+        msg = _make_message(document=doc)
+        update = _make_update(msg)
+
+        await adapter._handle_media_message(update, MagicMock())
+        event = adapter.handle_message.call_args[0][0]
+        assert event.media_types == ["text/html"]
+        assert f"[Content of {file_name}]" in event.text
+        assert "<h1>Movie schedule</h1>" in event.text
+
+    @pytest.mark.asyncio
+    async def test_html_with_generic_mime_still_labelled_text_html(self, adapter):
+        content = b"<html><body><p>Showtimes</p></body></html>"
+        file_obj = _make_file_obj(content)
+        doc = _make_document(
+            file_name="export.html", mime_type="application/octet-stream",
+            file_size=len(content), file_obj=file_obj,
+        )
+        msg = _make_message(document=doc)
+        update = _make_update(msg)
+
+        await adapter._handle_media_message(update, MagicMock())
+        event = adapter.handle_message.call_args[0][0]
+        assert event.media_types == ["text/html"]
+        assert "<p>Showtimes</p>" in event.text
+
+    @pytest.mark.asyncio
     async def test_caption_preserved_with_injection(self, adapter):
         content = b"file text"
         file_obj = _make_file_obj(content)

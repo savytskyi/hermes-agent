@@ -1182,7 +1182,8 @@ def _existing_regular_file(raw: str) -> bool:
 
 
 SUPPORTED_DOCUMENT_TYPES = {
-    ".pdf": "application/pdf", ".md": "text/markdown", ".txt": "text/plain", ".csv": "text/csv",
+    ".pdf": "application/pdf", ".md": "text/markdown", ".html": "text/html", ".htm": "text/html",
+    ".txt": "text/plain", ".csv": "text/csv",
     ".log": "text/plain", ".json": "application/json", ".xml": "application/xml",
     ".yaml": "application/yaml", ".yml": "application/yaml", ".toml": "application/toml",
     ".ini": "text/plain", ".cfg": "text/plain", ".zip": "application/zip",

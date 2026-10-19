@@ -92,6 +92,17 @@ class TestSupportedDocumentTypes:
             assert ext.startswith("."), f"{ext} missing leading dot"
             assert "/" in mime, f"{mime} is not a valid MIME type"
 
+    @pytest.mark.parametrize(
+        "ext",
+        [".pdf", ".md", ".html", ".htm", ".txt", ".zip", ".docx", ".xlsx", ".pptx"],
+    )
+    def test_expected_extensions_present(self, ext):
+        assert ext in SUPPORTED_DOCUMENT_TYPES
+
+    @pytest.mark.parametrize("ext", [".html", ".htm"])
+    def test_html_maps_to_text_html(self, ext):
+        assert SUPPORTED_DOCUMENT_TYPES[ext] == "text/html"
+
 
 # ---------------------------------------------------------------------------
 # TestCacheMediaBytes — the unified, platform-agnostic caching primitive
@@ -136,5 +147,20 @@ class TestCacheMediaBytes:
         # Caller-supplied MIME is preserved when present.
         assert result.media_type == "application/x-msdownload"
         assert os.path.exists(result.path)
+
+    @pytest.mark.parametrize("filename", ["schedule.html", "schedule.htm"])
+    def test_html_document_gets_canonical_mime_without_caller_mime(self, filename):
+        """Telegram/Discord may deliver HTML with an empty or generic MIME; the extension
+        table must still label it text/html so the agent sees a readable document."""
+        from gateway.platforms.base import cache_media_bytes
+        result = cache_media_bytes(b"<html><body>hi</body></html>", filename=filename,
+                                   mime_type="application/octet-stream")
+        assert result is not None
+        assert result.kind == "document"
+        assert result.media_type == "text/html"
+
+    def test_html_mime_without_filename_resolves_html_extension(self):
+        from gateway.platforms.base import _resolve_media_ext
+        assert _resolve_media_ext("", "text/html") == ".html"
 
 
