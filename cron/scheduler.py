@@ -3062,6 +3062,35 @@ class _RunDelivery:
     side_effect_ownership_lost: bool = False
 
 
+def _apply_notification_channel_directive(
+    job: dict, final_response: Optional[str], output: Optional[str],
+) -> tuple[dict, Optional[str], Optional[str]]:
+    """``(delivery_job, final_response, output)`` with a leading ``[[notification_channel:x]]``
+    control line applied: the marker is removed from both texts and ``delivery_job`` is a copy of
+    *job* whose ``deliver`` is ``telegram:<x>`` (resolved via ``TELEGRAM_<X>_CHAT_ID``). Without a
+    directive (or with an invalid alias) *job* and the texts come back unchanged."""
+    if not final_response:
+        return job, final_response, output
+    from tools.notification_routing import (
+        NotificationRoutingError, extract_notification_channel_directive)
+    try:
+        cleaned, alias = extract_notification_channel_directive(final_response)
+    except NotificationRoutingError as exc:
+        logger.warning("Job '%s': ignoring invalid notification channel directive: %s",
+                       job.get("id", "?"), exc)
+        return job, final_response, output
+    if not alias:
+        return job, final_response, output
+    if output:
+        output = re.sub(
+            r"\[\[notification_channel:[A-Za-z][A-Za-z0-9_-]*\]\][ \t]*\r?\n?", "", output, count=1)
+    delivery_job = dict(job)
+    delivery_job["deliver"] = f"telegram:{alias}"
+    logger.info("Job '%s': result routed to telegram:%s by notification channel directive",
+                job.get("id", "?"), alias)
+    return delivery_job, cleaned, output
+
+
 def _save_compose_deliver(
     d: _RunDelivery, fence: _FireOwnership, final_response: str, output: str, *,
     adapters, loop, verbose: bool, execution_token,
@@ -3069,6 +3098,12 @@ def _save_compose_deliver(
     """Save output, compose the notice and deliver it (both side effects run under the fire-claim
     fence; a lost claim raises ``_FireClaimLostDuringSideEffect`` for the caller)."""
     job = d.job
+    # Script jobs may pick a purpose-specific channel per result (e.g. an Elektro all-clear goes
+    # to Home All while a real outage keeps the job's default route) with a leading
+    # ``[[notification_channel:<alias>]]`` line. The control line is stripped before the output
+    # is persisted or delivered; bookkeeping keeps reading the job's own record.
+    delivery_job, final_response, output = _apply_notification_channel_directive(
+        job, final_response, output)
     with fence.side_effect_fence() as owns_output:
         if not owns_output:
             raise _FireClaimLostDuringSideEffect
@@ -3091,7 +3126,7 @@ def _save_compose_deliver(
     (
         deliver_content, d.blocked_config, _silent_alert, d.incident_acked, d.failure_incident_id,
     ) = _compose_run_delivery(
-        job, success=d.success, error=d.error, final_response=final_response,
+        delivery_job, success=d.success, error=d.error, final_response=final_response,
         output_file=output_file, agent_declared=d.agent_declared)
     # Whitespace-only == empty: skip delivery; the guard below marks it a soft failure.
     d.should_deliver = bool(deliver_content.strip()) and not _silent_alert
@@ -3121,17 +3156,17 @@ def _save_compose_deliver(
     if not d.should_deliver:
         return
     d.unresolved_origin = (
-        _normalize_deliver_value(_delivery_lane_value(job, for_failure=not d.success)) == "origin"
-        and not _resolve_delivery_targets(job, for_failure=not d.success)
+        _normalize_deliver_value(_delivery_lane_value(delivery_job, for_failure=not d.success)) == "origin"
+        and not _resolve_delivery_targets(delivery_job, for_failure=not d.success)
     )
     execution_id = job.get('execution_id')
     if execution_id and not job.get('no_agent'):
         from cron.delivery_queue import enqueue
         # Nothing to send: an origin-less job is ``not_configured``, never a queued "delivery".
         if d.unresolved_origin or _normalize_deliver_value(
-                _delivery_lane_value(job, for_failure=not d.success)) == "local":
+                _delivery_lane_value(delivery_job, for_failure=not d.success)) == "local":
             return
-        queued_job = dict(job)
+        queued_job = dict(delivery_job)
         if d.failure_incident_id:
             queued_job["_failure_incident_id"] = d.failure_incident_id
         # The queue row IS the send: publish it under the same fence as a direct send, so a claim
@@ -3150,7 +3185,7 @@ def _save_compose_deliver(
                 raise _FireClaimLostDuringSideEffect
             d.delivery_attempted = True
             d.delivery_error = _deliver_result(
-                job,
+                delivery_job,
                 deliver_content,
                 adapters=adapters,
                 loop=loop,

@@ -61,6 +61,18 @@ def resolve_send_target(
     WITH a parser stays strict. The optional validator has the final say over every returned id."""
     from gateway.config import Platform
     from gateway.platform_registry import platform_registry
+    if platform_name == "telegram":
+        # Purpose-specific notification aliases (telegram:markets, telegram:home, ...) resolve
+        # through TELEGRAM_<ALIAS>_CHAT_ID before anything else, and fail closed when a
+        # recognized alias is unset instead of falling back to the interactive chat.
+        from tools.notification_routing import (
+            NotificationRoutingError, resolve_telegram_notification_alias)
+        try:
+            notification_target = resolve_telegram_notification_alias(target_ref)
+        except NotificationRoutingError as exc:
+            return None, None, str(exc)
+        if notification_target:
+            return notification_target[0], None, None
     entry = platform_registry.get(platform_name)
 
     def _validated(chat_id, thread_id):
