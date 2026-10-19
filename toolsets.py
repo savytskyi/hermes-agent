@@ -3,6 +3,14 @@
 from typing import Dict, List, Any, Set, Optional, Tuple
 
 
+# Safe Radarr/Sonarr operations (tools/media_tools.py): search/add/monitor/status/queue only.
+_MEDIA_TOOLS = [
+    "media_search_movie", "media_download_movie", "media_search_movie_now",
+    "media_movie_status", "media_search_series", "media_download_series",
+    "media_download_episode", "media_series_status", "media_download_queue",
+    "media_health",
+]
+
 # Shared tool list for CLI and all messaging platform toolsets (edit once, all
 # platforms follow). Desktop GUI affordances are deliberately NOT here: they live
 # in `desktop_ui`/`project`, enabled per desktop-sourced session by the GUI gateway
@@ -34,6 +42,8 @@ _HERMES_CORE_TOOLS = [
     "kanban_unblock",
     "kanban_attach", "kanban_attach_url", "kanban_attachments",
     "computer_use",
+    # Radarr/Sonarr media control (gated on their URL + API-key env vars via check_fn).
+    *_MEDIA_TOOLS,
     # Service-gated connector account status and authorization links.
     "manage_connections",
 ]
@@ -64,7 +74,8 @@ def _core_without(*excluded, kanban=True):
 
 # Coding posture: everything you reach for while pairing on code; drops messaging,
 # tts, image_gen, cron, kanban and computer-use.
-_CODING_TOOLS = _core_without("image_generate", "text_to_speech", "cronjob_manage", "computer_use", kanban=False)
+_CODING_TOOLS = _core_without("image_generate", "text_to_speech", "cronjob_manage", "computer_use", *_MEDIA_TOOLS,
+                              kanban=False)
 
 # Toolsets a CLIENT adds to its own sessions (tui_gateway/server.py::_gui_surface_toolsets), never
 # config: another surface lacking them made no configuration choice.
@@ -164,6 +175,7 @@ TOOLSETS = {
         "files, and (for orchestrators) list, unblock, and fan out tasks.",
         [t for t in _HERMES_CORE_TOOLS if t.startswith("kanban_")],
     ),
+    "media": _ts("Safe Radarr/Sonarr search, add, download, status, queue, and health tools", _MEDIA_TOOLS),
     "discord": _ts("Discord read and participate tools (fetch messages, search members, create threads)", ["discord"]),
     "discord_admin": _ts("Discord server management (list channels/roles, pin messages, assign roles)", ["discord_admin"]),
     "yuanbao": _ts("Yuanbao platform tools - group info, member queries, DM, stickers", _YUANBAO_TOOLS),
