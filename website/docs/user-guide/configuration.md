@@ -2722,9 +2722,9 @@ quick_commands:
 
 Usage: type `/status`, `/disk`, `/update`, `/gpu`, or `/restart` in the CLI or any messaging platform. `exec` commands run locally on the host and return the output directly — no LLM call, no tokens consumed. `alias` commands rewrite to the configured slash command target.
 
-- **30-second timeout** — long-running commands are killed with an error message
+- **30-second timeout** — long-running commands are killed with an error message. A messaging-gateway `exec` command may set `timeout_seconds` (1–600) to override it, e.g. for browser-backed checks
 - **Priority** — quick commands are checked before skill commands, so you can override skill names
-- **Autocomplete** — quick commands are resolved at dispatch time and are not shown in the built-in slash-command autocomplete tables
+- **Autocomplete** — quick commands are resolved at dispatch time and are not shown in the built-in slash-command autocomplete tables. On Telegram, `exec`/`alias` quick commands are added to the bot's command menu (after the core operational commands; use `description:` for the menu text)
 - **Type** — supported types are `exec` and `alias`; other types show an error
 - **Works everywhere** — CLI, Telegram, Discord, Slack, WhatsApp, Signal, Email, Home Assistant
 

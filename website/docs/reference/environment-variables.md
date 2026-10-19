@@ -592,6 +592,27 @@ Three dashboard-auth providers ship in the box. For a remote Hermes Desktop conn
 | `HERMES_DESKTOP_NVIDIA_SWIFTSHADER` | (Desktop on Linux, NVIDIA only) Override for the EGL fallback that routes rendering through SwiftShader on driver series with a broken EGL probe (`580.x`, #40077): `1` forces the fallback on — the recovery hatch if a future series reintroduces the crash but is not yet in the closed list; `0` opts out and uses the native GPU path at your own risk. Force-on does not apply where another gate already disabled the GPU (remote display, WSLg, `HERMES_DESKTOP_DISABLE_GPU=0`). |
 | `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | (Desktop side) The in-app update check (`Help → Check for Updates…` and the passive update banner) reaches `api.github.com` through the proxy these standard variables name, with `NO_PROXY` exemptions honoured — the same convention `curl`, `npm` and `git` follow. Unset, the check connects directly. |
 
+### Radarr and Sonarr
+Safe media lookup, monitored acquisition, status, and queue tools. See [Radarr and Sonarr](/user-guide/features/radarr-sonarr). API keys are sent only as `X-Api-Key` headers to the configured service URLs.
+| Variable | Description |
+|----------|-------------|
+| `RADARR_URL` | Radarr base URL, for example `http://r1.local:7878`. Required with `RADARR_API_KEY` to enable movie tools. |
+| `RADARR_API_KEY` | Radarr API key. Store only in `~/.hermes/.env`. |
+| `RADARR_ROOT_FOLDER` | Optional default root-folder path. When unset, Hermes uses the most-used existing folder, then the first configured folder. |
+| `RADARR_QUALITY_PROFILE` | Optional default quality-profile name. Numeric IDs are not used. |
+| `SONARR_URL` | Sonarr base URL, for example `http://r1.local:8989`. Required with `SONARR_API_KEY` to enable series tools. |
+| `SONARR_API_KEY` | Sonarr API key. Store only in `~/.hermes/.env`. |
+| `SONARR_ROOT_FOLDER` | Optional default root-folder path. Selection behavior matches Radarr. |
+| `SONARR_QUALITY_PROFILE` | Optional default quality-profile name. Numeric IDs are not used. |
+
+### Telegram notification routing
+
+Automations (cron `deliver`, `hermes send`) can target purpose-specific Telegram chats with `telegram:<alias>`. Each alias resolves through `TELEGRAM_<ALIAS>_CHAT_ID`; bare `telegram` remains the interactive home channel. The reserved aliases `markets`, `home`, `home_all`, `dev`, `media`, and `critical` fail closed (no delivery) when their variable is unset. Any other alias is recognised once its variable exists. Script cron jobs may print a leading `[[notification_channel:<alias>]]` line to route an individual result; the line is stripped before saving and delivery.
+
+| Variable | Description |
+|----------|-------------|
+| `TELEGRAM_<ALIAS>_CHAT_ID` | Chat ID for `telegram:<alias>` (e.g. `TELEGRAM_HOME_ALL_CHAT_ID` for `telegram:home_all`). |
+
 ### Microsoft Graph (Teams Meetings)
 
 App-only credentials for the Microsoft Graph REST client used by the upcoming Teams meeting summary pipeline. See [Register a Microsoft Graph application](../guides/microsoft-graph-app-registration.md) for the Azure portal walkthrough and the exact API permissions required.
