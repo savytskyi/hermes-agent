@@ -802,7 +802,7 @@ gateway:
     prepare_failed: "Nem sikerült előkészíteni a MoA kört."
   quick_command:
     no_output: "A parancs nem adott kimenetet."
-    timed_out: "A gyorsparancs időtúllépés miatt leállt (30 s)."
+    timed_out: "A gyorsparancs időtúllépés miatt leállt ({seconds} s)."
     error: "Gyorsparancs-hiba: {error}"
     no_command: "A '/{command}' gyorsparancshoz nincs parancs megadva."
     unsupported_type: "A '/{command}' gyorsparancs típusa nem támogatott (támogatott: 'exec', 'alias')."

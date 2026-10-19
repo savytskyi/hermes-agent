@@ -16,7 +16,7 @@ import logging
 import os
 import signal
 import sys
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from agent.i18n import t
 from gateway.platforms.event import MessageEvent
@@ -27,6 +27,25 @@ logger = logging.getLogger("gateway.run")
 
 # Seconds a ``type: exec`` quick command may run before its whole process tree is killed.
 _EXEC_QUICK_COMMAND_TIMEOUT = 30
+# Upper bound for a per-command ``timeout_seconds`` override (browser-backed checks may need
+# longer than the default; nothing should hold a gateway slot for more than ten minutes).
+_EXEC_QUICK_COMMAND_MAX_TIMEOUT = 600
+
+
+def quick_command_timeout(qcmd: Any) -> int:
+    """Effective timeout for a ``type: exec`` quick command entry.
+
+    ``timeout_seconds`` is an optional per-command override in ``quick_commands``; invalid
+    values fall back to the default and valid ones are clamped to ``[1, 600]``."""
+    default = _EXEC_QUICK_COMMAND_TIMEOUT
+    raw = qcmd.get("timeout_seconds") if isinstance(qcmd, dict) else None
+    if raw is None or isinstance(raw, bool):
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(value, _EXEC_QUICK_COMMAND_MAX_TIMEOUT))
 
 
 async def _stop_exec_tree(proc) -> None:
@@ -175,11 +194,15 @@ class GatewayInboundHooksMixin:
                     return False, None, event.get_command()
         return False, None, None
 
-    async def _hm_run_exec_quick_command(self, command: str, exec_cmd: str, cwd: Optional[str] = None) -> str:
+    async def _hm_run_exec_quick_command(
+        self, command: str, exec_cmd: str, cwd: Optional[str] = None, timeout: Optional[float] = None,
+    ) -> str:
         """Run a ``type: exec`` quick command as a host shell of the gateway process: sanitized env
         (the gateway process has every API key in os.environ), redacted output, its process tree
-        killed after 30 s or when the awaiting task is cancelled (gateway shutdown).
+        killed after ``timeout`` seconds (default 30; per-command ``timeout_seconds`` override via
+        ``quick_command_timeout``) or when the awaiting task is cancelled (gateway shutdown).
         ``cwd`` is a local session's folder; None keeps the gateway's own (messaging)."""
+        timeout_seconds = _EXEC_QUICK_COMMAND_TIMEOUT if timeout is None else timeout
         proc = None
         try:
             from tools.environments.local import build_subprocess_env
@@ -190,7 +213,7 @@ class GatewayInboundHooksMixin:
                 # Windows ignores it and _stop_exec_tree walks the tree with taskkill /T).
                 start_new_session=True,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_EXEC_QUICK_COMMAND_TIMEOUT)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
             output = (stdout or stderr).decode().strip()
             if output:
                 from agent.redact import redact_sensitive_text
@@ -202,7 +225,7 @@ class GatewayInboundHooksMixin:
                 await asyncio.shield(_stop_exec_tree(proc))
             if isinstance(stopped, asyncio.CancelledError):
                 raise
-            return t("gateway.quick_command.timed_out")
+            return t("gateway.quick_command.timed_out", seconds=f"{timeout_seconds:g}")
         except Exception as e:  # health: allow BLE001 -- moved unchanged from run_inbound.py (main has the same handler): an operator quick command's failure is its reply
             return t("gateway.quick_command.error", error=e)
 
@@ -230,7 +253,8 @@ class GatewayInboundHooksMixin:
                 exec_cmd = qcmd.get("command", "")
                 if not exec_cmd:
                     return True, t("gateway.quick_command.no_command", command=command), command
-                return True, await self._hm_run_exec_quick_command(command, exec_cmd), command
+                return True, await self._hm_run_exec_quick_command(
+                    command, exec_cmd, timeout=quick_command_timeout(qcmd)), command
             if qtype != "alias":
                 return True, t("gateway.quick_command.unsupported_type", command=command), command
             new_command = self._hm_expand_alias_quick_command(event, qcmd)

@@ -792,7 +792,7 @@ gateway:
     prepare_failed: "MoA-Zug konnte nicht vorbereitet werden."
   quick_command:
     no_output: "Befehl hat keine Ausgabe zurückgegeben."
-    timed_out: "Zeitüberschreitung beim Schnellbefehl (30s)."
+    timed_out: "Zeitüberschreitung beim Schnellbefehl ({seconds}s)."
     error: "Fehler im Schnellbefehl: {error}"
     no_command: "Für den Schnellbefehl '/{command}' ist kein Befehl definiert."
     unsupported_type: "Der Schnellbefehl '/{command}' hat einen nicht unterstützten Typ (unterstützt: 'exec', 'alias')."

@@ -792,7 +792,7 @@ gateway:
     prepare_failed: "MoA turu hazırlanamadı."
   quick_command:
     no_output: "Komut çıktı döndürmedi."
-    timed_out: "Hızlı komut zaman aşımına uğradı (30 sn)."
+    timed_out: "Hızlı komut zaman aşımına uğradı ({seconds} sn)."
     error: "Hızlı komut hatası: {error}"
     no_command: "'/{command}' hızlı komutunun tanımlı bir komutu yok."
     unsupported_type: "'/{command}' hızlı komutunun türü desteklenmiyor (desteklenenler: 'exec', 'alias')."

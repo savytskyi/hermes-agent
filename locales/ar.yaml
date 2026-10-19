@@ -792,7 +792,7 @@ gateway:
     prepare_failed: "فشل تجهيز دور MoA."
   quick_command:
     no_output: "لم يُرجع الأمر أي مخرجات."
-    timed_out: "انتهت مهلة الأمر السريع (30 ثانية)."
+    timed_out: "انتهت مهلة الأمر السريع ({seconds} ثانية)."
     error: "خطأ في الأمر السريع: {error}"
     no_command: "الأمر السريع '/{command}' لا يحدد أي أمر."
     unsupported_type: "الأمر السريع '/{command}' من نوع غير مدعوم (المدعوم: 'exec' و'alias')."

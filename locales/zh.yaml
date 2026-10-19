@@ -792,7 +792,7 @@ gateway:
     prepare_failed: "准备 MoA 回合失败。"
   quick_command:
     no_output: "命令没有返回任何输出。"
-    timed_out: "快捷命令超时（30 秒）。"
+    timed_out: "快捷命令超时（{seconds} 秒）。"
     error: "快捷命令错误：{error}"
     no_command: "快捷命令 '/{command}' 未定义要执行的命令。"
     unsupported_type: "快捷命令 '/{command}' 的类型不受支持（支持：'exec'、'alias'）。"

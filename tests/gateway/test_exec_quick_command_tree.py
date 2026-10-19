@@ -33,7 +33,7 @@ def _pid(path: Path):
 async def test_timed_out_exec_command_kills_its_background_child(tmp_path, monkeypatch):
     monkeypatch.setattr(run_inbound_hooks, '_EXEC_QUICK_COMMAND_TIMEOUT', 2)
     reply = await GatewayInboundHooksMixin()._hm_run_exec_quick_command('probe', _TREE, cwd=str(tmp_path))
-    assert reply == run_inbound_hooks.t('gateway.quick_command.timed_out')
+    assert reply == run_inbound_hooks.t('gateway.quick_command.timed_out', seconds='2')
     child = _pid(tmp_path / 'child.pid')
     assert child is not None
     await async_wait_until(lambda: not _alive(child), timeout=10, what='the backgrounded sleep to stop')

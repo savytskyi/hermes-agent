@@ -792,7 +792,7 @@ gateway:
     prepare_failed: "MoA ターンの準備に失敗しました。"
   quick_command:
     no_output: "コマンドは出力を返しませんでした。"
-    timed_out: "クイックコマンドがタイムアウトしました (30 秒)。"
+    timed_out: "クイックコマンドがタイムアウトしました ({seconds} 秒)。"
     error: "クイックコマンドのエラー: {error}"
     no_command: "クイックコマンド '/{command}' にはコマンドが定義されていません。"
     unsupported_type: "クイックコマンド '/{command}' のタイプはサポートされていません (サポート: 'exec'、'alias')。"

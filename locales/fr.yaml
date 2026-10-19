@@ -934,7 +934,7 @@ gateway:
     prepare_failed: "Échec de la préparation du tour MoA."
   quick_command:
     no_output: "La commande n'a renvoyé aucune sortie."
-    timed_out: "Délai de la commande rapide dépassé (30 s)."
+    timed_out: "Délai de la commande rapide dépassé ({seconds} s)."
     error: "Erreur de commande rapide : {error}"
     no_command: "La commande rapide '/{command}' n'a aucune commande définie."
     unsupported_type: "La commande rapide '/{command}' a un type non pris en charge (pris en charge : 'exec', 'alias')."

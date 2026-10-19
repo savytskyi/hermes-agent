@@ -792,7 +792,7 @@ gateway:
     prepare_failed: "No se pudo preparar el turno MoA."
   quick_command:
     no_output: "El comando no devolvió ninguna salida."
-    timed_out: "El comando rápido agotó el tiempo (30 s)."
+    timed_out: "El comando rápido agotó el tiempo ({seconds} s)."
     error: "Error del comando rápido: {error}"
     no_command: "El comando rápido '/{command}' no tiene ningún comando definido."
     unsupported_type: "El comando rápido '/{command}' tiene un tipo no compatible (compatibles: 'exec', 'alias')."
