@@ -24,6 +24,10 @@ from tools.terminal_tool_test_guard import SAFE_TEST, unmanaged_test_run_guidanc
     "python scripts/run_tests_parallel.py -j 8",
     "bash -c 'cd repo; pytest -q'",
     "for f in a b; do pytest $f; done",
+    "pytest -n 8 tests -v",
+    "scripts/safe-test --status; pytest -n 5 tests",
+    "bash -lc 'pytest -q'",
+    "pytest --version && pytest -n 4 tests",
 ])
 def test_direct_test_runs_are_refused_with_the_managed_command(command):
     guidance = unmanaged_test_run_guidance(command, "local")
@@ -38,6 +42,11 @@ def test_direct_test_runs_are_refused_with_the_managed_command(command):
     "grep -rn pytest .",
     "cat pytest.ini",
     "pytest --version",
+    "pytest -h",
+    "cd repo && scripts/safe-test tests/x.py -q -v",
+    "scripts/safe-test --mode exec -- bash -c 'cd x; pytest -q'",
+    "grep -c 'pytest' tests/conftest.py",
+    "docker exec app pytest -n 4",
 ])
 def test_non_runs_and_managed_runs_pass(command):
     assert unmanaged_test_run_guidance(command, "local") is None
@@ -52,7 +61,8 @@ def test_background_amp_is_refused_without_surrounding_spaces(command):
     assert "'&' backgrounding" in _foreground_background_guidance(command)
 
 
-@pytest.mark.parametrize("command", ["make 2>&1 | tee log", "a && b || c", "cmd &> out", "cmd |& tee x", "echo 'a & b'"])
+@pytest.mark.parametrize("command", ["make 2>&1 | tee log", "a && b || c", "cmd &> out", "cmd |& tee x", "echo 'a & b'",
+                                     "echo a\\&b"])
 def test_non_background_amp_spellings_still_run(command):
     assert _foreground_background_guidance(command) is None
 

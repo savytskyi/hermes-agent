@@ -24,7 +24,8 @@ How it holds on macOS, where there is no cgroup:
   of address space every process reserves at start, so there is no hard per-tree memory
   cap. The supervisor samples the aggregate physical footprint of the tree (RSS plus
   compressed/swapped pages — what Activity Monitor shows; RSS elsewhere) and kills it over budget, and
-  also on low available memory or critical kernel memory pressure. Each process
+  also on low available memory (the kernel's memorystatus level on macOS) or critical
+  kernel memory pressure. Each process
   additionally gets RLIMIT_AS = baseline + headroom, which the kernel does enforce on
   allocation: a single runaway process fails with ENOMEM/MemoryError instead of eating
   the machine. Sampling is not a hard limit: an allocation burst faster than the poll
@@ -239,9 +240,20 @@ def child_env(run_id: str, workers: int) -> dict:
 
 # --- Process ownership ------------------------------------------------------------------
 
+def _birth(proc: psutil.Process) -> float:
+    """Start time that stays put across clock steps. On macOS psutil shifts ``create_time()`` by
+    any boot-time change since psutil was imported (``_psosx.adjust_proc_create_time``), so after
+    a sleep/wake or NTP step every identity check would fail; the unadjusted kernel start does not
+    move and reads the same in the supervisor and the watchdog."""
+    if psutil.MACOS:
+        with contextlib.suppress(AttributeError, TypeError):
+            return float(proc._proc.create_time(monotonic=True))
+    return proc.create_time()
+
+
 def _identity(proc: psutil.Process) -> tuple[int, float] | None:
     try:
-        return proc.pid, proc.create_time()
+        return proc.pid, _birth(proc)
     except psutil.Error:
         return None
 
@@ -250,7 +262,7 @@ def _same_process(pid: int, ctime: float) -> psutil.Process | None:
     """The live process *pid* only if it is still the one first seen at *ctime*."""
     try:
         proc = psutil.Process(pid)
-        if abs(proc.create_time() - ctime) < 0.01 and proc.status() != psutil.STATUS_ZOMBIE:
+        if abs(_birth(proc) - ctime) < 0.01 and proc.status() != psutil.STATUS_ZOMBIE:
             return proc
     except psutil.Error:
         pass
@@ -297,11 +309,11 @@ class Tracker:
         uid = os.getuid()
         group_ok = self._group_pinned()
         hits = []
-        for proc in psutil.process_iter(["uids", "create_time"]):
+        for proc in psutil.process_iter(["uids"]):
             try:
                 if proc.info["uids"] is None or proc.info["uids"].real != uid or proc.pid in self.exclude:
                     continue
-                in_group = group_ok and os.getpgid(proc.pid) == self.root_pid and proc.info["create_time"] >= self.root_ctime
+                in_group = group_ok and os.getpgid(proc.pid) == self.root_pid and _birth(proc) >= self.root_ctime
                 if in_group or proc.environ().get(TAG_ENV) == self.run_id:
                     hits.append(proc)
             except (psutil.Error, OSError):
@@ -377,16 +389,31 @@ def reap_run(tracker: Tracker, grace_s: float) -> int:
 
 # --- Host health ------------------------------------------------------------------------
 
-def darwin_pressure_level() -> int | None:
-    """kern.memorystatus_vm_pressure_level: 1 normal, 2 warn, 4 critical."""
+def _darwin_sysctl_int(name: bytes) -> int | None:
     if sys.platform != "darwin":
         return None
     value = ctypes.c_int(0)
     size = ctypes.c_size_t(ctypes.sizeof(value))
-    libc = ctypes.CDLL(None)
-    if libc.sysctlbyname(b"kern.memorystatus_vm_pressure_level", ctypes.byref(value), ctypes.byref(size), None, 0):
+    if ctypes.CDLL(None).sysctlbyname(name, ctypes.byref(value), ctypes.byref(size), None, 0):
         return None
     return value.value
+
+
+def darwin_pressure_level() -> int | None:
+    """kern.memorystatus_vm_pressure_level: 1 normal, 2 warn, 4 critical."""
+    return _darwin_sysctl_int(b"kern.memorystatus_vm_pressure_level")
+
+
+def host_available() -> int:
+    """Memory the host can still hand out. On macOS: kern.memorystatus_level, the kernel's own
+    "free percentage" (what ``memory_pressure`` prints and jetsam acts on, counting purgeable and
+    compressible pages); psutil's free + inactive reads several GiB low on a healthy Mac and would
+    kill runs for nothing. Elsewhere psutil's available (MemAvailable on Linux)."""
+    vm = psutil.virtual_memory()
+    level = _darwin_sysctl_int(b"kern.memorystatus_level")
+    if level is not None and 0 < level <= 100:
+        return vm.total * level // 100
+    return vm.available
 
 
 def ancestors() -> list[tuple[int, float]]:
@@ -492,6 +519,7 @@ def run_watchdog() -> int:
                 supervisor = tuple(msg["supervisor"])
                 tracker = Tracker(msg["run_id"], msg["root"][0], msg["root"][1],
                                   exclude=frozenset({os.getpid(), supervisor[0]}))
+                tracker.known[tracker.root_pid] = tracker.root_ctime
                 deadline, grace = msg["deadline"], msg["grace"]
             for pid, ctime in msg.get("track", ()):
                 if tracker is not None:
@@ -525,7 +553,7 @@ def _breach(tracker: Tracker, limits: Limits, started: float, state: dict, chain
         return EXIT_MEMORY, f"memory budget exceeded: {used / _MIB:.0f} MiB > {limits.max_memory / _MIB:.0f} MiB (whole run)"
     if not host_due:
         return None
-    available = psutil.virtual_memory().available
+    available = host_available()
     if available < limits.min_available:
         return EXIT_MEMORY, f"host available memory {available / _MIB:.0f} MiB < floor {limits.min_available / _MIB:.0f} MiB"
     if (level := darwin_pressure_level()) is not None and level >= _DARWIN_PRESSURE_CRITICAL:

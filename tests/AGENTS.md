@@ -82,7 +82,8 @@ What it enforces, per run:
   injected so an `-n` from `addopts` fails instead of fanning out; `--workers 2` is the ceiling.
 - **Timeout** (default 1800 s, exit 124) and a **memory budget** for the whole run
   (default min(4 GiB, RAM/4), summed macOS physical footprint of every process; exit 125). It also
-  stops on host available memory < 2 GiB or critical macOS memory pressure.
+  stops when host available memory (macOS: the kernel's `kern.memorystatus_level`, not free RAM)
+  drops below 2 GiB, or on critical macOS memory pressure.
 - **Per-process caps** inherited by every descendant: `RLIMIT_AS` = spawn baseline + 8 GiB
   (`--vm-headroom-mb`, 0 disables), `RLIMIT_CPU` = timeout + 60 s, no core dumps, `nice 10`.
 - **Cleanup of everything the run started** — `&` jobs and `setsid`/`start_new_session`
