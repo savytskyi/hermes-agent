@@ -97,6 +97,8 @@ def start_loop_liveness_watchdog(
 
     def _watchdog() -> None:
         strikes = 0
+        last_success = time.perf_counter()
+        cpu_at_success = time.process_time()
         while not stop_event.wait(timeout=probe_interval):
             probe_event = threading.Event()
             try:
@@ -106,6 +108,7 @@ def start_loop_liveness_watchdog(
             except Exception:
                 logger.debug("Failed to schedule gateway loop liveness probe", exc_info=True)
                 return
+            probe_started = time.perf_counter()
             deadline = time.monotonic() + probe_timeout
             while not stop_event.is_set():  # poll so a stop() mid-wait is honoured within ~50ms
                 remaining = deadline - time.monotonic()
@@ -115,11 +118,28 @@ def start_loop_liveness_watchdog(
                 return
             if probe_event.is_set():
                 strikes = 0
+                last_success = time.perf_counter()
+                cpu_at_success = time.process_time()
                 continue
             if stop_event.is_set():  # re-checked before each irreversible step: a late stop() wins
                 return
             strikes += 1
+            elapsed = time.perf_counter() - last_success
+            snapshot = {
+                "strikes": strikes, "probe_interval_s": probe_interval,
+                "probe_timeout_s": probe_timeout,
+                "probe_elapsed_s": time.perf_counter() - probe_started,
+                "watchdog_elapsed_s": elapsed,
+                "process_cpu_elapsed_s": time.process_time() - cpu_at_success,
+                "thread_count": threading.active_count(),
+            }
             if strikes < max_strikes:
+                # A final stack alone cannot distinguish one fixed blocker from a loop
+                # making slow progress. Keep each missed-probe witness, off-loop and
+                # without rendering task locals (which can contain user secrets).
+                _write_watchdog_dump(
+                    get_shutdown_watchdog_dump_path(), delay_s=elapsed,
+                    snapshot=snapshot, event="loop_liveness_probe_missed")
                 continue
             if stop_event.is_set():
                 return
@@ -131,8 +151,8 @@ def start_loop_liveness_watchdog(
             # File + stderr: a console-less launcher (Windows .vbs login item) discards stderr, so a
             # liveness death used to leave no stack anywhere (#120356, #91097).
             _write_watchdog_dump(
-                get_shutdown_watchdog_dump_path(), delay_s=probe_timeout * strikes,
-                snapshot={"strikes": strikes, "probe_interval_s": probe_interval},
+                get_shutdown_watchdog_dump_path(), delay_s=elapsed,
+                snapshot=snapshot,
                 event="loop_liveness_watchdog_fired")
             if stop_event.is_set():
                 return
