@@ -98,6 +98,10 @@ def _patch_update_deps(monkeypatch, tmp_path, run_side_effect):
 
     monkeypatch.setattr(update_custody, "run",
                         lambda argv, *, inherit_lock=False, **kw: run_side_effect(list(argv), **kw))
+    # Where there is no parent-death signal (macOS) a fetch under the held lock runs its own Popen
+    # beside a watchdog instead of the runner above; without this a real `git fetch` ran in tmp_path.
+    monkeypatch.setattr(update_custody, "_run_owner_watched",
+                        lambda argv, kwargs: run_side_effect(list(argv), **kwargs))
     monkeypatch.setattr(hermes_main, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(update_cmd, "_prepare_updated_checkout", lambda *a, **k: None)
     (tmp_path / ".git").mkdir()

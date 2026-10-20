@@ -23,6 +23,24 @@ def _pm_generation_dirs(prefixes) -> set[Path]:
     return found
 
 
+def _linked_worktree_git_dirs(checkout) -> set[Path]:
+    """The per-worktree git dir (``<common>/worktrees/<name>``) of *checkout* when it is a linked
+    worktree whose ``.git`` file names it and whose ``gitdir`` file names it back. The common dir
+    (refs, objects, other worktrees) is never returned: it may be the live install's own ``.git``."""
+    dot_git = Path(checkout) / ".git"
+    try:
+        text = dot_git.read_text(encoding="utf-8-sig").strip() if dot_git.is_file() else ""
+        if not text.startswith("gitdir:"):
+            return set()
+        git_dir = (Path(checkout) / text[len("gitdir:"):].strip()).resolve()
+        back = Path((git_dir / "gitdir").read_text(encoding="utf-8-sig").strip()).resolve()
+    except OSError:
+        return set()
+    if git_dir.parent.name != "worktrees" or back != dot_git.resolve():
+        return set()
+    return {git_dir}
+
+
 _INTERPRETER_PREFIXES = tuple({
     Path(p).resolve() for p in (sys.prefix, sys.base_prefix, sys.exec_prefix, sys.base_exec_prefix)
 } | {
@@ -42,6 +60,10 @@ _INTERPRETER_PREFIXES = tuple({
     # checkout's own .venv is not Hermes state; without this every run from a default install
     # trips on its first traceback.
     Path(__file__).resolve().parent.parent,
+    # A linked worktree of that checkout keeps HEAD/index and the interrupted-update marker that
+    # hermes_bootstrap stats on first import (_early_recovery._git_dir) in <common>/worktrees/<name>,
+    # under the home whenever the main checkout is. That dir is this checkout's, not Hermes state.
+    *_linked_worktree_git_dirs(Path(__file__).resolve().parent.parent),
 })
 # The same prefixes as plain strings for the check() fast path. PurePath comparison folds case on
 # Windows; ``os.path.normcase`` (identity on POSIX) reproduces that for string compares. Prefixes

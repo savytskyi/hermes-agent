@@ -6,6 +6,7 @@ session and pushed a 16 GB Mac into a reboot. Every test drives the real supervi
 subprocess with a private lock dir and tiny workloads (sleeps, a few hundred MB at most).
 """
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -213,6 +214,28 @@ def test_exec_mode_pins_pytest_to_one_process(argv, expected):
 def test_runner_options_stop_at_the_first_passthrough_token():
     assert safe_test.split_own_args(["--timeout", "5", "-q", "tests/x.py"]) == (["--timeout", "5"], ["-q", "tests/x.py"])
     assert safe_test.split_own_args(["--mode=exec", "--", "npm", "test"]) == (["--mode=exec"], ["npm", "test"])
+
+
+def test_launcher_prefers_a_supervisor_python_that_is_not_the_test_interpreter(tmp_path, real_bash):
+    """The run inherits HERMES_PYTHON and run_tests.sh tests on it, skipping the checkout's managed
+    test environment: steering users to it for psutil ran suites on a stale venv missing deps."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    launcher = scripts / "safe-test"
+    launcher.write_text((SCRIPT.parent / "safe-test").read_text(encoding="utf-8"), encoding="utf-8")
+    (scripts / "safe_test.py").write_text("import sys; print(sys.executable)\n", encoding="utf-8")
+    # Only dirname on PATH: no python3 fallback that happens to have psutil.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "dirname").symlink_to(shutil.which("dirname"))
+    env = {"PATH": str(bin_dir), "HOME": str(tmp_path)}
+
+    chosen = subprocess.run([real_bash, str(launcher)], env={**env, "HERMES_SAFE_TEST_PYTHON": sys.executable,
+                            "HERMES_PYTHON": str(tmp_path / "missing")}, capture_output=True, text=True, timeout=30, check=False)
+    missing = subprocess.run([real_bash, str(launcher)], env=env, capture_output=True, text=True, timeout=30, check=False)
+
+    assert chosen.returncode == 0 and chosen.stdout.strip() == sys.executable
+    assert missing.returncode == 2 and "HERMES_SAFE_TEST_PYTHON" in missing.stderr
 
 
 def test_cli_refuses_xdist_and_nested_runs(tmp_path):

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Resource-safe managed test runner — see scripts/safe_test.py and tests/AGENTS.md.
-# Picks an interpreter that has psutil: $HERMES_PYTHON, the checkout's .venv / venv, then python3.
+# Picks an interpreter that has psutil for the supervisor: $HERMES_SAFE_TEST_PYTHON, $HERMES_PYTHON,
+# the checkout's .venv / venv, then python3. Prefer HERMES_SAFE_TEST_PYTHON: the run inherits
+# HERMES_PYTHON, and run_tests.sh then tests on that interpreter instead of the checkout's managed
+# test environment (a stale or wrong-version venv fails tests for missing dependencies).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-for candidate in "${HERMES_PYTHON:-}" "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/venv/bin/python" "$(command -v python3 || true)"; do
+for candidate in "${HERMES_SAFE_TEST_PYTHON:-}" "${HERMES_PYTHON:-}" "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/venv/bin/python" "$(command -v python3 || true)"; do
   if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" -c 'import psutil' 2>/dev/null; then
     exec "$candidate" "$SCRIPT_DIR/safe_test.py" "$@"
   fi
 done
-echo "[safe-test] no Python with psutil found (set HERMES_PYTHON)" >&2
+echo "[safe-test] no Python with psutil found (set HERMES_SAFE_TEST_PYTHON; HERMES_PYTHON would also become the test interpreter)" >&2
 exit 2

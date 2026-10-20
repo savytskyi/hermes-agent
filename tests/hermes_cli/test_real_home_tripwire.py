@@ -216,6 +216,33 @@ def test_checkout_inside_a_guarded_root_is_not_hermes_state():
         guard.check(PROJECT_ROOT.parent / "config.yaml")
 
 
+def test_linked_worktree_git_dir_is_the_checkouts_not_the_common_dir(tmp_path):
+    """A worktree of the default install keeps its git dir at
+    ``<home>/hermes-agent/.git/worktrees/<name>``; hermes_bootstrap stats the interrupted-update
+    marker there on first import, which tripped the guard for every test importing hermes_cli.main.
+    Only that per-worktree dir is the checkout's: the common dir is the live install's."""
+    from tests.home_io_guard import _linked_worktree_git_dirs
+
+    common = tmp_path / "home" / "hermes-agent" / ".git"
+    git_dir = common / "worktrees" / "wt"
+    git_dir.mkdir(parents=True)
+    checkout = tmp_path / "wt"
+    checkout.mkdir()
+    (checkout / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    (git_dir / "gitdir").write_text(f"{checkout / '.git'}\n", encoding="utf-8")
+    assert _linked_worktree_git_dirs(checkout) == {git_dir.resolve()}
+
+    # A gitdir that does not name this checkout back, or is not under worktrees/, adds nothing.
+    (git_dir / "gitdir").write_text(f"{tmp_path / 'other' / '.git'}\n", encoding="utf-8")
+    assert _linked_worktree_git_dirs(checkout) == set()
+    (checkout / ".git").write_text(f"gitdir: {common}\n", encoding="utf-8")
+    (common / "gitdir").write_text(f"{checkout / '.git'}\n", encoding="utf-8")
+    assert _linked_worktree_git_dirs(checkout) == set()
+    # A regular checkout (.git directory) or no .git at all adds nothing.
+    assert _linked_worktree_git_dirs(common.parent) == set()
+    assert _linked_worktree_git_dirs(tmp_path / "missing") == set()
+
+
 @pytest.mark.parametrize("kind", ["environments", "test-environment"])
 def test_pm_generation_dir_around_the_running_venv_is_the_interpreter(tmp_path, kind):
     """scripts/run_tests.sh runs ``<home>/installs/<key>/<kind>/<gen>/venv`` with HOME pointed at the

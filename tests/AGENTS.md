@@ -73,6 +73,19 @@ scripts/safe-test --mode exec -- .venv/bin/python -m pytest tests -q   # any oth
 scripts/safe-test --status                                   # is a managed run active?
 ```
 
+**Which interpreter tests run on.** The supervisor only needs `psutil`; when the checkout has no
+`.venv` with it, point `HERMES_SAFE_TEST_PYTHON` at one. Do not use `HERMES_PYTHON` for that:
+the run inherits it and `run_tests.sh` then tests on it instead of the checkout's managed
+(Python 3.14) test environment, so a stale or 3.11 venv fails tests for missing optional
+dependencies (`aiohttp` → Feishu webhook tests) rather than for anything in the code.
+
+**Testing a branch while the live install runs from `~/.hermes/hermes-agent`.** Use a separate
+checkout outside `~/.hermes` (a `git clone`, or a linked worktree — the guard exempts a worktree's
+own `.git/worktrees/<name>` dir, never the shared `.git`), run `scripts/safe-test` from *that*
+checkout, and never set `HERMES_PYTHON` to the live checkout's venv: `hermes update`'s owner probe
+(`update_owning_install`) would then see the live install as the interpreter's owner, and the
+real-home guard fails those tests by design.
+
 What it enforces, per run:
 
 - **One run at a time per user** (flock in `/tmp/hermes-safe-test-<uid>/`). A second run exits
