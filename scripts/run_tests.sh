@@ -144,6 +144,8 @@ _pf86="$(env | sed -n 's/^ProgramFiles(x86)=//p' | head -n1)"
 #     their user profiles and the transcripts CI uploads.
 #   * HERMES_E2E_STRICT_ACCEPTANCE makes tests/e2e/core/_pending_fixes.py's
 #     known gaps hard failures in an acceptance run (workflow dispatch input).
+#   * HERMES_SAFE_TEST_RUN tags every process of a scripts/safe-test run so the
+#     supervisor can find and reap descendants that escape its process tree.
 #   * HERMES_TEST_SSH_HOST / _USER / _PORT / _KEY and HERMES_TEST_DOCKER_IMAGE
 #     arm the real-backend tests (tests/tools/test_ssh_environment.py,
 #     tests/tools/test_docker_backend_real.py); remote-backends.yml points them at
@@ -164,7 +166,7 @@ for _test_var in HERMES_TEST_IMAGE HERMES_TEST_WORKERS HERMES_TEST_PATHS \
   SSL_CERT_FILE SSL_CERT_DIR HERMES_GATEWAY_LOCK_DIR HERMES_E2E_REQUIRE_TUI CI GITHUB_ACTIONS \
   HERMES_E2E_WINDOWS_INSTALL HERMES_E2E_MACHINE_ROOT HERMES_E2E_PROFILES_ROOT HERMES_E2E_ARTIFACTS \
   HERMES_E2E_STRICT_ACCEPTANCE HERMES_TEST_SSH_HOST HERMES_TEST_SSH_USER HERMES_TEST_SSH_PORT \
-  HERMES_TEST_SSH_KEY HERMES_TEST_DOCKER_IMAGE; do
+  HERMES_TEST_SSH_KEY HERMES_TEST_DOCKER_IMAGE HERMES_SAFE_TEST_RUN; do
   if [ -n "${!_test_var:-}" ]; then
     TEST_ENV+=("$_test_var=${!_test_var}")
   fi

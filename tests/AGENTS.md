@@ -59,6 +59,50 @@ scripts/run_tests.sh -v --tb=long                       # pytest flags pass thro
   Tests that `patch.object(Path, "home", ...)` must ALSO set `HERMES_HOME` — code reads the
   env var, not `Path.home()/.hermes`.
 
+## Agent-initiated test runs: `scripts/safe-test`
+
+Agents (Hermes, Codex, any tool-driven session) run tests **only** through `scripts/safe-test`.
+The terminal tool refuses direct `pytest` / `python -m pytest` / `run_tests.sh` on the local
+host and says what to send instead. Two `pytest -n 5 … &` suites once outlived their session
+and pushed a 16 GB Mac into a reboot; the wrapper exists so that cannot recur.
+
+```bash
+scripts/safe-test tests/tools/test_foo.py -q                 # run_tests.sh -j 1 under supervision
+scripts/safe-test --timeout 2400 tests/gateway/ -q           # longer budget for a directory
+scripts/safe-test --mode exec -- .venv/bin/python -m pytest tests -q   # any other project
+scripts/safe-test --status                                   # is a managed run active?
+```
+
+What it enforces, per run:
+
+- **One run at a time per user** (flock in `/tmp/hermes-safe-test-<uid>/`). A second run exits
+  75 at once and names the active one; wait for it (`--status`, or `--wait-lock SECONDS`) —
+  never start tests another way. The lock frees itself when the run's processes are gone.
+- **One worker.** `-n`/`--numprocesses`/`--dist`/`-p xdist` are refused, `-p no:xdist` is
+  injected so an `-n` from `addopts` fails instead of fanning out; `--workers 2` is the ceiling.
+- **Timeout** (default 1800 s, exit 124) and a **memory budget** for the whole run
+  (default min(4 GiB, RAM/4), summed macOS physical footprint of every process; exit 125). It also
+  stops on host available memory < 2 GiB or critical macOS memory pressure.
+- **Per-process caps** inherited by every descendant: `RLIMIT_AS` = spawn baseline + 8 GiB
+  (`--vm-headroom-mb`, 0 disables), `RLIMIT_CPU` = timeout + 60 s, no core dumps, `nice 10`.
+- **Cleanup of everything the run started** — `&` jobs and `setsid`/`start_new_session`
+  escapees included (tracked by tree, process group and the `HERMES_SAFE_TEST_RUN` env tag;
+  every kill is pid + start-time checked, unrelated processes are never signalled) — on normal
+  exit, timeout, memory breach, SIGTERM/SIGINT/SIGHUP (exit 130), the launching agent/gateway
+  disappearing (exit 129), and SIGKILL of the supervisor (an out-of-session watchdog reaps).
+
+Long runs: foreground `terminal` calls are capped, so start long suites with
+`terminal(command="scripts/safe-test …", background=true, notify_on_complete=true)` and wait for
+the notification. Never append `&`, `nohup`, `setsid` or `disown`, and never nest `safe-test`.
+
+**Limits of the guarantee (macOS).** There is no cgroup: the memory budget is enforced by
+sampling (every 0.25 s), so a burst faster than that can overshoot before the kill, and
+`RLIMIT_AS` cannot be set below the ~33 GiB of address space each process reserves at start —
+it caps one runaway process, not the tree. Escapees that strip their environment *and* leave
+the process group before the first scan can be missed. The terminal-tool refusal is a
+command-shape heuristic for cooperative agents; `execute_code` or a script that spawns pytest
+itself is not inspected. On Linux the same runner works; systemd scopes would add hard limits.
+
 ## Don't fake the host OS
 
 Behaviour that genuinely differs per host is tested ON that host with `@pytest.mark.platforms("linux")`

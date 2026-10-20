@@ -67,8 +67,6 @@ def _blocked_json(error: str, status: str) -> str:
 _SHELL_LEVEL_BACKGROUND_RE = re.compile(
     r"(?:^|[;&|]\s*|&&\s*|\|\|\s*|\$\(\s*)(?:nohup|disown|setsid)\b", re.IGNORECASE | re.MULTILINE
 )
-_INLINE_BACKGROUND_AMP_RE = re.compile(r"\s&\s")
-_TRAILING_BACKGROUND_AMP_RE = re.compile(r"\s&\s*(?:#.*)?$")
 
 
 def _strip_quotes(command: str) -> str:
@@ -107,7 +105,9 @@ _FOREGROUND_GUIDANCE = (
         "checks and tests in separate commands.",
     ),
     (
-        lambda s: _INLINE_BACKGROUND_AMP_RE.search(s) or _TRAILING_BACKGROUND_AMP_RE.search(s),
+        # Any `&` left once and-lists and fd redirects are removed backgrounds a job: spacing
+        # does not matter to bash (`a& b&`, `(cmd &)` detach exactly like `a & b`).
+        lambda s: "&" in _NON_BACKGROUND_AMP_RE.sub("", s),
         "Foreground command uses '&' backgrounding. Re-send WITHOUT the '&' as "
         "terminal(command=\"<cmd>\", background=true) — add notify_on_complete=true "
         "for bounded jobs — then run health checks and tests in follow-up terminal calls.",

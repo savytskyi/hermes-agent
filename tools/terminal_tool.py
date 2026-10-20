@@ -894,6 +894,7 @@ from tools.terminal_tool_guards import (
     _foreground_background_guidance, _safe_command_preview, _validate_workdir,
     gateway_lifecycle_block, self_repo_block, trailing_amp_background_command,
 )
+from tools.terminal_tool_test_guard import unmanaged_test_run_guidance
 from tools.terminal_tool_background import _YIELDED_NOTE, spawn_background_process, yield_to_background_handler
 from tools.terminal_tool_result import finalize_foreground_result
 
@@ -1177,6 +1178,8 @@ def _plan_execution(
     # value is truthy and would fire an immediate "-Ns" timeout.
     if timeout is not None and timeout <= 0:
         raise _Rejected(tool_error(f"timeout must be a positive number of seconds (got {timeout})."))
+    if test_guidance := unmanaged_test_run_guidance(command, env_type):
+        raise _Rejected(_error_json(test_guidance, status="error"))
     promoted = None
     if not background:
         # An over-cap foreground timeout is a bounded job the caller wants to wait for (test suites,
