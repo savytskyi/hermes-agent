@@ -693,8 +693,15 @@ class GatewayStartupMixin:
 
         See #69089.
         """
-        from gateway.shutdown_watchdog import _arm_loop_floor_timer, start_loop_liveness_watchdog
+        from gateway.shutdown_watchdog import (
+            _arm_loop_floor_timer, configure_watchdog_dumps, start_loop_liveness_watchdog,
+        )
         config = getattr(self, "config", None)
+        if config is not None:  # before the opt-out: the shutdown watchdog writes the same file
+            configure_watchdog_dumps(
+                max_mb=getattr(config, "watchdog_dump_max_mb", None),
+                backups=getattr(config, "watchdog_dump_backups", None),
+                full_stack_cooldown_s=getattr(config, "watchdog_dump_full_stack_cooldown_s", None))
         if config is not None and not getattr(config, "loop_watchdog", True):
             return
         if getattr(self, "_loop_floor_timer_handle", None) is None:

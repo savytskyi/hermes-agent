@@ -15,6 +15,7 @@ import faulthandler
 import json
 import logging
 import os
+import shutil
 import sys
 import threading
 import time
@@ -43,6 +44,20 @@ DEFAULT_LOOP_WATCHDOG_TIMEOUT_S = 10.0
 DEFAULT_LOOP_WATCHDOG_MAX_STRIKES = 3
 _HEARTBEAT_RELATIVE = ("state", "gateway.heartbeat")
 _WATCHDOG_DUMP_RELATIVE = ("logs", "gateway-shutdown-watchdog.log")
+# Dump-file retention (gateway.watchdog_dump_* in config.yaml): rotate past max bytes, keep N
+# backups; only the oldest backup is ever dropped. A non-final missed probe renders every stack at
+# most once per cooldown and otherwise only the threads whose stack changed since the last dump;
+# a final (process-exiting) dump always carries every stack.
+DEFAULT_WATCHDOG_DUMP_MAX_BYTES = 5 * 2**20
+DEFAULT_WATCHDOG_DUMP_BACKUPS = 3
+DEFAULT_WATCHDOG_DUMP_FULL_STACK_COOLDOWN_S = 600.0
+# Below this much free space a non-final miss keeps only its JSON header (no stacks).
+_WATCHDOG_DUMP_MIN_FREE_BYTES = 64 * 2**20
+# Each blocking dump write runs on a helper thread joined for at most this long, so a hung
+# filesystem or a stalled stderr reader can delay the watchdog but never stop it reaching exit.
+_WATCHDOG_DUMP_IO_TIMEOUT_S = 10.0
+_MAX_DUMP_THREADS = _MAX_DUMP_FRAMES = 100  # faulthandler's own caps
+_PROBE_MISSED_EVENT = "loop_liveness_probe_missed"
 
 
 def _coerce_float(value: Any, default: float, floor: float = 0.0) -> float:
@@ -200,7 +215,7 @@ def start_loop_liveness_watchdog(
                 # without rendering task locals (which can contain user secrets).
                 _write_watchdog_dump(
                     get_shutdown_watchdog_dump_path(), delay_s=elapsed,
-                    snapshot=snapshot, event="loop_liveness_probe_missed")
+                    snapshot=snapshot, event=_PROBE_MISSED_EVENT)
                 continue
             if stop_event.is_set():
                 return
@@ -321,27 +336,173 @@ def resolve_shutdown_watchdog_delay(
     return _coerce_float(drain_timeout, 0.0) + grace
 
 
+class _DumpState:
+    """Process-wide dump retention policy plus the dedup memory every watchdog writer shares."""
+    def __init__(self) -> None:
+        self.state_lock, self.io_lock = threading.Lock(), threading.Lock()
+        self.max_bytes = DEFAULT_WATCHDOG_DUMP_MAX_BYTES
+        self.backups = DEFAULT_WATCHDOG_DUMP_BACKUPS
+        self.full_stack_cooldown_s = DEFAULT_WATCHDOG_DUMP_FULL_STACK_COOLDOWN_S
+        self.last_full_at: Optional[float] = None
+        self.last_stacks: dict[int, str] = {}  # thread ident -> stack text at the last dump
+
+
+_dump_state = _DumpState()
+
+
+def configure_watchdog_dumps(*, max_mb: Any = None, backups: Any = None,
+                             full_stack_cooldown_s: Any = None) -> None:
+    """Apply ``gateway.watchdog_dump_*`` (already range-checked by ``GatewayConfig``); a value that
+    is not a number, or would leave less than 64 KiB / one backup, keeps the current setting."""
+    def _num(value: Any) -> Optional[float]:
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value == value
+        return float(value) if ok else None
+    st = _dump_state
+    if (mb := _num(max_mb)) is not None and mb * 2**20 >= 64 * 1024:
+        st.max_bytes = int(mb * 2**20)
+    if (n := _num(backups)) is not None and n >= 1:  # 0 would truncate the only copy
+        st.backups = int(n)
+    if (cooldown := _num(full_stack_cooldown_s)) is not None and cooldown >= 0:
+        st.full_stack_cooldown_s = cooldown
+
+
+def _render_thread_stacks() -> dict[int, str]:
+    """Every thread's stack, faulthandler-shaped (no locals) but rendered in Python. faulthandler
+    writes while HOLDING the GIL, so a slow disk or a full stderr pipe froze the event loop for the
+    whole write; here the GIL is held only to walk frames, and the later write releases it."""
+    names = {t.ident: t.name for t in threading.enumerate()}
+    current = threading.get_ident()
+    stacks: dict[int, str] = {}
+    for ident, frame in list(sys._current_frames().items())[:_MAX_DUMP_THREADS]:
+        lines = [f"{'Current thread' if ident == current else 'Thread'} 0x{ident:016x}"
+                 f"{f' [{names[ident]}]' if names.get(ident) else ''} (most recent call first):"]
+        while frame is not None and len(lines) <= _MAX_DUMP_FRAMES:
+            code = frame.f_code
+            lines.append(f'  File "{code.co_filename}", line {frame.f_lineno} in {code.co_name}')
+            frame = frame.f_back
+        if frame is not None:
+            lines.append("  ...")
+        stacks[ident] = "\n".join(lines) + "\n"
+    return stacks
+
+
+def _run_bounded(fn: Callable[[], Any]) -> bool:
+    """Run blocking dump I/O on a helper thread; True only if it finished in the I/O timeout."""
+    try:
+        worker = threading.Thread(target=fn, daemon=True, name="gateway-watchdog-dump-io")
+        worker.start()
+    except Exception:  # cannot spawn (thread/memory exhaustion): run inline rather than lose the dump
+        fn()
+        return True
+    worker.join(_WATCHDOG_DUMP_IO_TIMEOUT_S)
+    return not worker.is_alive()
+
+
+def _free_bytes(directory: Path) -> Optional[int]:
+    try:
+        return shutil.disk_usage(directory).free
+    except Exception:
+        return None
+
+
+def _rotate_dump(path: Path, backups: int) -> None:
+    """``path`` -> ``.1`` -> ... -> ``.<backups>``. Renames only; the oldest backup is the one file
+    ever overwritten, so no diagnostics are discarded short of the retention limit."""
+    for i in range(backups - 1, 0, -1):
+        older = path.with_name(f"{path.name}.{i}")
+        if older.exists():
+            os.replace(older, path.with_name(f"{path.name}.{i + 1}"))
+    os.replace(path, path.with_name(f"{path.name}.1"))
+
+
+def _append_dump(dump_path: Path, header: dict[str, Any], stacks_text: Optional[str],
+                 final: bool, result: dict[str, Any]) -> None:
+    """Rotate if needed, then append one dump record in a single write; never raises. A non-final
+    record drops its stacks (keeping the header) on a nearly full disk or an unrotatable file."""
+    try:
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+        free = _free_bytes(dump_path.parent)
+        if not final and stacks_text and free is not None and free < _WATCHDOG_DUMP_MIN_FREE_BYTES:
+            stacks_text, header["stacks"] = None, "omitted_low_disk"
+        size = dump_path.stat().st_size if dump_path.exists() else 0
+        if size and size + len(stacks_text or "") >= _dump_state.max_bytes:
+            try:
+                _rotate_dump(dump_path, _dump_state.backups)
+            except OSError as exc:
+                header["rotate_error"] = repr(exc)
+                if not final:
+                    stacks_text, header["stacks"] = None, "omitted_rotate_failed"
+        record = json.dumps(header, default=str) + "\n"
+        if stacks_text:
+            record += f"--- thread stacks ({header['stacks']}) ---\n{stacks_text}--- end dump ---\n"
+        with open(dump_path, "a", encoding="utf-8") as fh:
+            fh.write(record)
+        result["ok"] = True
+    except Exception as exc:  # ENOSPC, EROFS, EACCES, ...: the stderr copy still runs
+        result["error"] = repr(exc)
+
+
 def _write_watchdog_dump(dump_path: Path, *, delay_s: float, snapshot: Optional[dict[str, Any]],
                          event: str = "shutdown_watchdog_fired") -> None:
-    """Best-effort faulthandler + metadata dump before hard-exit (file, then stderr)."""
-    header = {"event": event, "pid": os.getpid(), "delay_s": delay_s,
-              "fired_at": datetime.now(UTC).isoformat(), "snapshot": snapshot or {}}
-    with contextlib.suppress(OSError):  # unwritable dir: skip only the file copy, stderr still runs
-        dump_path.parent.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(Exception), open(dump_path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(header, default=str) + "\n--- faulthandler dump (all threads) ---\n")
-        fh.flush()
+    """Best-effort stack + metadata dump (file, then stderr); never raises. Final events (anything
+    but a non-final missed probe) always carry every stack. A missed probe carries every stack at
+    most once per cooldown, else only threads whose stack changed since the last dump: one freeze
+    used to append ``max_strikes`` full dumps, and a loop flapping under ``max_strikes`` appended
+    them indefinitely. All I/O is bounded by ``_WATCHDOG_DUMP_IO_TIMEOUT_S``."""
+    st = _dump_state
+    final = event != _PROBE_MISSED_EVENT
+    header: dict[str, Any] = {"event": event, "pid": os.getpid(), "delay_s": delay_s,
+                              "fired_at": datetime.now(UTC).isoformat(), "snapshot": snapshot or {}}
+    try:
+        stacks: Optional[dict[int, str]] = _render_thread_stacks()
+    except Exception as exc:
+        stacks, header["render_error"] = None, repr(exc)
+    stacks_text: Optional[str] = None
+    with st.state_lock:  # decision only; never held across I/O
+        now = time.monotonic()
+        if stacks is None:
+            header["stacks"] = "unavailable"
+        elif final or st.last_full_at is None or now - st.last_full_at >= st.full_stack_cooldown_s:
+            header["stacks"], stacks_text = "full", "".join(stacks.values())
+            st.last_full_at = now
+        else:
+            changed = [text for ident, text in stacks.items() if st.last_stacks.get(ident) != text]
+            header["stacks"] = "changed_since_last_dump"
+            header["unchanged_thread_count"] = len(stacks) - len(changed)
+            stacks_text = "".join(changed)
+        if stacks is not None:
+            st.last_stacks = stacks
+    result: dict[str, Any] = {}
+
+    def _file_copy() -> None:
+        # A writer hung on a wedged filesystem keeps io_lock, so later dumps skip the file
+        # instead of queueing behind it.
+        if not st.io_lock.acquire(timeout=_WATCHDOG_DUMP_IO_TIMEOUT_S):
+            result["error"] = "an earlier dump write is still blocked"
+            return
         try:
-            faulthandler.dump_traceback(file=fh, all_threads=True)
-        except Exception:
-            fh.write("(faulthandler.dump_traceback failed)\n")
-        fh.write("--- end dump ---\n")
-        fh.flush()
-    with contextlib.suppress(Exception):  # stderr too: journald/launchd get it if disk is wedged
-        sys.stderr.write(f"Gateway {event.replace('_', ' ')} after {delay_s:.0f}s "
-                         f"(pid={os.getpid()}); dumping all thread stacks.\n")
-        sys.stderr.flush()
-        faulthandler.dump_traceback(all_threads=True)
+            _append_dump(dump_path, header, stacks_text, final, result)
+        finally:
+            st.io_lock.release()
+
+    if not _run_bounded(_file_copy):
+        result.setdefault("error", f"dump write blocked > {_WATCHDOG_DUMP_IO_TIMEOUT_S:.0f}s")
+    file_ok = bool(result.get("ok"))
+    note = "" if file_ok else f"; dump file unavailable: {result.get('error')}"
+
+    def _stderr_copy() -> None:  # journald/launchd copy; for a miss, the copy of last resort only
+        with contextlib.suppress(Exception):
+            sys.stderr.write(f"Gateway {event.replace('_', ' ')} after {delay_s:.0f}s "
+                             f"(pid={os.getpid()}); stacks: {header['stacks']} -> {dump_path}{note}\n")
+            if final or not file_ok:
+                if stacks_text:
+                    sys.stderr.write(stacks_text)
+                elif stacks is None:
+                    sys.stderr.flush()
+                    faulthandler.dump_traceback(all_threads=True)
+            sys.stderr.flush()
+
+    _run_bounded(_stderr_copy)
 
 
 def arm_shutdown_watchdog(

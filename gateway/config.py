@@ -18,6 +18,9 @@ from gateway.shutdown_watchdog import (
     DEFAULT_LOOP_WATCHDOG_INTERVAL_S,
     DEFAULT_LOOP_WATCHDOG_MAX_STRIKES,
     DEFAULT_LOOP_WATCHDOG_TIMEOUT_S,
+    DEFAULT_WATCHDOG_DUMP_BACKUPS,
+    DEFAULT_WATCHDOG_DUMP_FULL_STACK_COOLDOWN_S,
+    DEFAULT_WATCHDOG_DUMP_MAX_BYTES,
 )
 from utils import fast_safe_load, is_truthy_value
 
@@ -635,6 +638,11 @@ class GatewayConfig:
     loop_watchdog_probe_interval_s: float = DEFAULT_LOOP_WATCHDOG_INTERVAL_S
     loop_watchdog_probe_timeout_s: float = DEFAULT_LOOP_WATCHDOG_TIMEOUT_S
     loop_watchdog_max_strikes: int = DEFAULT_LOOP_WATCHDOG_MAX_STRIKES
+    # logs/gateway-shutdown-watchdog.log retention: rotate past max_mb, keep `backups` rotated files;
+    # a non-final missed probe renders every stack at most once per cooldown (0 = every miss).
+    watchdog_dump_max_mb: float = DEFAULT_WATCHDOG_DUMP_MAX_BYTES / 2**20
+    watchdog_dump_backups: int = DEFAULT_WATCHDOG_DUMP_BACKUPS
+    watchdog_dump_full_stack_cooldown_s: float = DEFAULT_WATCHDOG_DUMP_FULL_STACK_COOLDOWN_S
     # What happens when the LAST messaging adapter goes down. ``exit`` (default) shuts the gateway
     # down with the failure verdict so a supervising service manager (systemd/launchd) restarts it;
     # ``stay_alive`` keeps the process running and leaves recovery to the reconnect watcher — for
@@ -657,7 +665,8 @@ class GatewayConfig:
         "on_all_adapters_down",
         "room_link_url", "systemd_watchdog_seconds", "loop_watchdog",
         "loop_watchdog_probe_interval_s", "loop_watchdog_probe_timeout_s",
-        "loop_watchdog_max_strikes", "unauthorized_dm_behavior", "unauthorized_dm_decline_message",
+        "loop_watchdog_max_strikes", "watchdog_dump_max_mb", "watchdog_dump_backups",
+        "watchdog_dump_full_stack_cooldown_s", "unauthorized_dm_behavior", "unauthorized_dm_decline_message",
     )
 
     def __post_init__(self) -> None:
@@ -744,6 +753,9 @@ class GatewayConfig:
         max_strikes = _coerce_int(pick("loop_watchdog_max_strikes"), DEFAULT_LOOP_WATCHDOG_MAX_STRIKES)
         if not 1 <= max_strikes <= 1000:
             max_strikes = DEFAULT_LOOP_WATCHDOG_MAX_STRIKES
+        dump_backups = _coerce_int(pick("watchdog_dump_backups"), DEFAULT_WATCHDOG_DUMP_BACKUPS)
+        if not 1 <= dump_backups <= 100:
+            dump_backups = DEFAULT_WATCHDOG_DUMP_BACKUPS
 
         systemd_watchdog_seconds = coerce_systemd_watchdog_seconds(
             pick("systemd_watchdog_seconds"), key_label("systemd_watchdog_seconds")
@@ -792,6 +804,9 @@ class GatewayConfig:
             loop_watchdog_probe_interval_s=bounded_float("loop_watchdog_probe_interval_s", DEFAULT_LOOP_WATCHDOG_INTERVAL_S, 1.0, 3600.0),
             loop_watchdog_probe_timeout_s=bounded_float("loop_watchdog_probe_timeout_s", DEFAULT_LOOP_WATCHDOG_TIMEOUT_S, 1.0, 600.0),
             loop_watchdog_max_strikes=max_strikes,
+            watchdog_dump_max_mb=bounded_float("watchdog_dump_max_mb", DEFAULT_WATCHDOG_DUMP_MAX_BYTES / 2**20, 0.0625, 1024.0),
+            watchdog_dump_backups=dump_backups,
+            watchdog_dump_full_stack_cooldown_s=bounded_float("watchdog_dump_full_stack_cooldown_s", DEFAULT_WATCHDOG_DUMP_FULL_STACK_COOLDOWN_S, 0.0, 86400.0),
             on_all_adapters_down=on_all_adapters_down,
             max_concurrent_sessions=max_concurrent_sessions,
             unauthorized_dm_behavior=_normalize_choice(data.get("unauthorized_dm_behavior"), UNAUTHORIZED_DM_BEHAVIORS, "pair"),

@@ -2143,6 +2143,12 @@ DEFAULT_CONFIG = {
         "loop_watchdog_probe_interval_s": 30.0,
         "loop_watchdog_probe_timeout_s": 10.0,
         "loop_watchdog_max_strikes": 3,
+        # logs/gateway-shutdown-watchdog.log retention: rotate past max_mb into .1 .. .<backups>
+        # (oldest dropped); a non-final missed probe re-renders every thread stack at most once per
+        # cooldown, otherwise only threads whose stack changed. The exiting dump is always full.
+        "watchdog_dump_max_mb": 5.0,
+        "watchdog_dump_backups": 3,
+        "watchdog_dump_full_stack_cooldown_s": 600.0,
         # Allow all users without allowlists (security opt-in).
         "allow_all_users": False,
         # Bot-to-bot loop guard: admitted bot messages per conversation before a cooldown.
