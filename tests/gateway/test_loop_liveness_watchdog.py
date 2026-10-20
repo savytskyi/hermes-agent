@@ -19,14 +19,15 @@ def test_loop_liveness_watchdog_stop_during_dump_disarms_hard_exit():
     handle_ref = {}
     exit_codes = []
 
-    def stop_during_dump(*_args, **_kwargs) -> None:
+    def stop_during_dump(*_args, **_kwargs) -> dict:
         assert handle_ready.wait(timeout=2.0)
         handle_ref["handle"].stop()
+        return {}
 
     with (
         patch("gateway.shutdown_watchdog.logger.critical") as critical,
         patch(
-            "gateway.shutdown_watchdog.faulthandler.dump_traceback",
+            "gateway.shutdown_watchdog._render_thread_stacks",
             side_effect=stop_during_dump,
         ) as dump,
         patch("gateway.shutdown_watchdog.os._exit", side_effect=exit_codes.append),
@@ -41,7 +42,7 @@ def test_loop_liveness_watchdog_stop_during_dump_disarms_hard_exit():
 
     assert not handle.is_alive()
     critical.assert_called_once()
-    dump.assert_called()  # dump-file copy first, then stderr (#120356)
+    dump.assert_called()  # the final dump still ran (#120356)
     assert exit_codes == []
 
 
@@ -92,7 +93,7 @@ def test_loop_liveness_watchdog_stop_during_final_miss_disarms_hard_exit():
     loop.call_soon_threadsafe.side_effect = hold_scheduled_probe
     with (
         patch("gateway.shutdown_watchdog.logger.critical") as critical,
-        patch("gateway.shutdown_watchdog.faulthandler.dump_traceback") as dump,
+        patch("gateway.shutdown_watchdog._render_thread_stacks", return_value={}) as dump,
         patch("gateway.shutdown_watchdog.os._exit", side_effect=exit_codes.append),
     ):
         handle = start_loop_liveness_watchdog(
@@ -130,7 +131,7 @@ def test_loop_liveness_watchdog_stop_after_first_recheck_skips_final_actions():
     loop.call_soon_threadsafe.side_effect = hold_scheduled_probe
     with (
         patch("gateway.shutdown_watchdog.logger.critical") as critical,
-        patch("gateway.shutdown_watchdog.faulthandler.dump_traceback") as dump,
+        patch("gateway.shutdown_watchdog._render_thread_stacks", return_value={}) as dump,
         patch("gateway.shutdown_watchdog.os._exit") as hard_exit,
     ):
         handle = start_loop_liveness_watchdog(
@@ -296,7 +297,7 @@ def test_loop_liveness_watchdog_marks_runtime_degraded_before_restart():
         fired.set()
 
     with (
-        patch("gateway.shutdown_watchdog.faulthandler.dump_traceback"),
+        patch("gateway.shutdown_watchdog._render_thread_stacks", return_value={}),
         patch("gateway.shutdown_watchdog.os._exit", side_effect=fake_exit),
     ):
         handle = start_loop_liveness_watchdog(

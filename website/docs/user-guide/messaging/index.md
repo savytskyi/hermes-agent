@@ -201,6 +201,46 @@ gateway process overwrites it, and the dashboard's gateway badge shows
 **Degraded** with the same reason. Set `gateway.loop_watchdog: false` in
 `config.yaml` to disable the watchdog.
 
+#### Watchdog dump file and retention
+
+Watchdog evidence goes to `~/.hermes/logs/gateway-shutdown-watchdog.log` (one
+JSON header line per event, followed by the thread stacks). Two kinds of event
+are written:
+
+- **Missed probe** (`loop_liveness_probe_missed`, before the final strike):
+  the first one carries every thread's stack. Later misses within
+  `gateway.watchdog_dump_full_stack_cooldown_s` (default 600 s) carry only the
+  threads whose stack changed since the previous dump; the header's
+  `unchanged_thread_count` counts the rest. One freeze therefore writes one
+  full dump instead of one per strike, and a loop that keeps missing probes
+  without reaching `max_strikes` writes one full dump per cooldown, not one
+  per miss. stderr (`gateway.error.log` under launchd) gets a single summary
+  line per miss, plus the stacks only when the dump file could not be written.
+- **Final dump** (`loop_liveness_watchdog_fired`, `shutdown_watchdog_fired`):
+  always every thread's stack, in the file and on stderr, right before the
+  process exits.
+
+The file rotates by size: when a record would push it past
+`gateway.watchdog_dump_max_mb` (default 5), it is renamed to `.1`, existing
+backups shift up to `.2` … `.<watchdog_dump_backups>` (default 3), and only
+the oldest backup beyond that count is dropped. Nothing is truncated in place,
+so the default caps the watchdog dumps at about 20 MB.
+
+Writing diagnostics never takes the gateway down or blocks the loop. Stacks
+are rendered in Python, not with `faulthandler`, because `faulthandler` holds
+the GIL for the whole write, so a slow disk would freeze the event loop. Each
+write runs on a helper thread that the watchdog waits on for at most 10 s, so
+a hung filesystem cannot delay a restart beyond that. With less than 64 MB
+free on the log volume, or a file that cannot be rotated, missed-probe records
+keep their JSON header but drop the stacks. A final dump is always attempted.
+
+```yaml
+gateway:
+  watchdog_dump_max_mb: 5                     # rotate past this size (min 0.0625)
+  watchdog_dump_backups: 3                    # rotated files kept (1-100)
+  watchdog_dump_full_stack_cooldown_s: 600    # 0 = full stacks on every miss
+```
+
 Housekeeping also re-stamps `gateway_state.json`'s `updated_at` every tick
 (60 s), so it doubles as a heartbeat: when the process is still alive but that
 stamp is more than 120 s old, `hermes gateway status` prints
