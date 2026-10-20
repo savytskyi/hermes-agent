@@ -200,6 +200,29 @@ def test_hung_dump_write_is_abandoned_and_later_dumps_skip_the_file(tmp_path, ca
     assert "earlier dump write is still blocked" in err
 
 
+def test_blocked_stderr_keeps_one_writer_thread_not_one_per_miss(tmp_path, monkeypatch):
+    """A loop flapping under max_strikes keeps missing probes; with stderr blocked (a wedged log
+    volume behind launchd) every miss used to leave another writer thread parked on it forever."""
+    from tests.waiting import wait_until
+
+    monkeypatch.setattr(shutdown_watchdog, "_WATCHDOG_DUMP_IO_TIMEOUT_S", 0.2)
+    release = threading.Event()
+    blocked = SimpleNamespace(write=lambda _text: release.wait(10), flush=lambda: None)
+    monkeypatch.setattr(sys, "stderr", blocked)
+
+    def writers():
+        return [t for t in threading.enumerate() if t.name == "gateway-watchdog-dump-io"]
+
+    try:
+        for strike in range(5):
+            _dump(tmp_path / "w.log", strikes=strike)
+        wait_until(lambda: len(writers()) <= 1, timeout=5, what="extra stderr writers to give up")
+        assert len(writers()) == 1
+    finally:
+        release.set()
+    wait_until(lambda: not writers(), timeout=5, what="the blocked writer to finish")
+
+
 def test_watchdog_still_restarts_when_the_dump_file_hangs(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setattr(shutdown_watchdog, "_WATCHDOG_DUMP_IO_TIMEOUT_S", 0.2)

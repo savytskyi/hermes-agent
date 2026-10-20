@@ -339,7 +339,7 @@ def resolve_shutdown_watchdog_delay(
 class _DumpState:
     """Process-wide dump retention policy plus the dedup memory every watchdog writer shares."""
     def __init__(self) -> None:
-        self.state_lock, self.io_lock = threading.Lock(), threading.Lock()
+        self.state_lock, self.io_lock, self.stderr_lock = threading.Lock(), threading.Lock(), threading.Lock()
         self.max_bytes = DEFAULT_WATCHDOG_DUMP_MAX_BYTES
         self.backups = DEFAULT_WATCHDOG_DUMP_BACKUPS
         self.full_stack_cooldown_s = DEFAULT_WATCHDOG_DUMP_FULL_STACK_COOLDOWN_S
@@ -491,6 +491,16 @@ def _write_watchdog_dump(dump_path: Path, *, delay_s: float, snapshot: Optional[
     note = "" if file_ok else f"; dump file unavailable: {result.get('error')}"
 
     def _stderr_copy() -> None:  # journald/launchd copy; for a miss, the copy of last resort only
+        # Same rule as the file: a copy stuck on a blocked stderr keeps stderr_lock, so a loop
+        # flapping under max_strikes cannot pile up one blocked writer thread per miss.
+        if not st.stderr_lock.acquire(timeout=_WATCHDOG_DUMP_IO_TIMEOUT_S):
+            return
+        try:
+            _write_stderr_copy()
+        finally:
+            st.stderr_lock.release()
+
+    def _write_stderr_copy() -> None:
         with contextlib.suppress(Exception):
             sys.stderr.write(f"Gateway {event.replace('_', ' ')} after {delay_s:.0f}s "
                              f"(pid={os.getpid()}); stacks: {header['stacks']} -> {dump_path}{note}\n")
