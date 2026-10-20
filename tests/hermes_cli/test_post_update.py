@@ -128,6 +128,41 @@ def test_state_db_guard_passes_valid_db(tmp_path, monkeypatch):
     assert step_state_db_guard() == {"ok": True}
 
 
+def test_state_db_guard_never_walks_a_large_db_at_boot(tmp_path, monkeypatch):
+    """Boot runs before the event loop in every entry point: a 2 GB state.db just under the update
+    path's 2 GiB cap took 2-20+ min of PRAGMA integrity_check, tripping the startup watchdog, and a
+    killed boot never writes its record, so every launch re-ran it."""
+    import sqlite3
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    conn = sqlite3.connect(tmp_path / "state.db")
+    conn.execute("CREATE TABLE t (x)")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(post_update, "BOOT_INTEGRITY_CHECK_MAX_BYTES", 1)
+    traced = []
+    real_connect = sqlite3.connect
+
+    def tracing_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(traced.append)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", tracing_connect)
+    assert step_state_db_guard() == {"ok": True}
+    assert traced, "the header + schema probe must still open the db"
+    assert not any("integrity_check" in sql for sql in traced)
+
+
+def test_state_db_guard_still_flags_a_large_malformed_db(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "state.db").write_bytes(b"SQLite format 3\0" + b"\xff" * 4096)
+    monkeypatch.setattr(post_update, "BOOT_INTEGRITY_CHECK_MAX_BYTES", 1)
+    result = step_state_db_guard()
+    assert result["ok"] is False
+    assert "schema probe" in result["error"]
+
+
 # ── step_drop_live_plugin_catalog ────────────────────────────────────
 
 

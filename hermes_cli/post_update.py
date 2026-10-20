@@ -123,13 +123,21 @@ def step_sync_skills() -> dict:
 # state.db integrity guard (#68474 — check-only variant)
 # ---------------------------------------------------------------------------
 
+# Boot runs this synchronously before any entry point's event loop, so the full
+# page walk is kept to dbs that check in seconds; larger ones get the O(1)
+# header + schema probe. The update path keeps the 2 GiB default: a 2 GB
+# state.db took minutes (20+ under memory pressure) and tripped the startup
+# watchdog, and a killed boot writes no record, so every launch re-ran it.
+BOOT_INTEGRITY_CHECK_MAX_BYTES = 64 << 20  # 64 MiB
+
+
 def step_state_db_guard() -> dict:
     """Verify the active home's state.db is intact.
 
     Boot bootstrap has no pre-update snapshot to restore from (that pairing
     lives in ``hermes update``), so this is detection: a corrupt db is
     surfaced loudly in the log instead of the user silently losing session
-    search. Read-only, idempotent.
+    search. Read-only, idempotent, bounded by BOOT_INTEGRITY_CHECK_MAX_BYTES.
     """
     from hermes_constants import get_hermes_home
     from hermes_cli.backup import verify_sqlite_integrity
@@ -137,7 +145,8 @@ def step_state_db_guard() -> dict:
     state_path = get_hermes_home() / "state.db"
     if not state_path.exists():
         return {"ok": True, "skipped": "no-state-db"}
-    result = verify_sqlite_integrity(state_path, check_header=True, run_pragma=True)
+    result = verify_sqlite_integrity(state_path, check_header=True, run_pragma=True,
+                                     max_bytes=BOOT_INTEGRITY_CHECK_MAX_BYTES)
     if result.get("valid"):
         return {"ok": True}
     message = result.get("message", "unknown error")
