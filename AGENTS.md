@@ -118,6 +118,13 @@ Every former god file is a **facade** (public entry points + the names other pac
 
 ## Rules that apply everywhere
 
+- **The live checkout is production, not a workspace.** The running gateway imports from
+  `~/.hermes/hermes-agent` lazily, so a branch switch or edit there mixes versions inside a live
+  process. All development, testing and review happen in an isolated worktree or clone
+  (`git worktree add <dir> -b <branch> custom/hermes-integrations`, outside `~/.hermes`); never
+  edit, check out, stash or run tests in the live checkout. It changes only during a controlled
+  deployment: verified candidate fast-forwarded onto `custom/hermes-integrations`, previous commit
+  kept as a rollback ref, no active runs, then one gateway restart.
 - **No defensive clutter:** no wrappers or `try/except: pass` around code that cannot fail, no flags
   nobody sets, no dead code wired in without E2E proof. Comments keep the WHY, cut the WHAT.
 - **Never infer process identity from argv substrings;** use
