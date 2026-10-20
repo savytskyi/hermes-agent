@@ -70,6 +70,59 @@ class _LoopFloorTimerHandle:
             self._timer.cancel()
 
 
+class _LivenessProbe(threading.Event):
+    """Probe event that remembers when the loop ran it. A probe answered after its deadline is
+    still a strike, but its late answer proves the loop was dispatching (slow, not wedged)."""
+    sent_at: float = 0.0
+    answered_at: Optional[float] = None
+
+    def set(self) -> None:
+        self.answered_at = time.monotonic()
+        super().set()
+
+    def late_answer_s(self) -> Optional[float]:
+        return None if self.answered_at is None else round(self.answered_at - self.sent_at, 3)
+
+
+def _darwin_sysctl(name: str, ctype: Any) -> Any:
+    """``sysctlbyname`` via ctypes (no subprocess: forking under memory pressure is itself a stall)."""
+    import ctypes
+    value, size = ctype(), ctypes.c_size_t(ctypes.sizeof(ctype))
+    if ctypes.CDLL(None).sysctlbyname(name.encode(), ctypes.byref(value), ctypes.byref(size), None, 0):
+        return None
+    return value
+
+
+def _host_pressure_snapshot() -> dict[str, Any]:
+    """Best-effort host load and memory pressure; never raises. Lets a liveness miss caused by
+    system-wide thrash (macOS jetsam / compressor exhaustion, Linux swap storms) be told apart
+    from a loop wedged by its own code without correlating OS logs after the fact."""
+    snap: dict[str, Any] = {"cpu_count": os.cpu_count()}
+    with contextlib.suppress(Exception):
+        snap["loadavg"] = [round(v, 2) for v in os.getloadavg()]
+    if sys.platform == "darwin":
+        with contextlib.suppress(Exception):
+            import ctypes
+
+            class _XswUsage(ctypes.Structure):
+                _fields_ = [("total", ctypes.c_uint64), ("avail", ctypes.c_uint64),
+                            ("used", ctypes.c_uint64), ("pagesize", ctypes.c_uint32),
+                            ("encrypted", ctypes.c_int32)]
+
+            # 1 normal, 2 warn, 4 critical (kernel memorystatus level)
+            if (level := _darwin_sysctl("kern.memorystatus_vm_pressure_level", ctypes.c_int)) is not None:
+                snap["memory_pressure_level"] = level.value
+            if (compressed := _darwin_sysctl("vm.compressor_bytes_used", ctypes.c_uint64)) is not None:
+                snap["compressor_mib"] = compressed.value // 2**20
+            if (swap := _darwin_sysctl("vm.swapusage", _XswUsage)) is not None:
+                snap["swap_used_mib"] = swap.used // 2**20
+    else:
+        with contextlib.suppress(Exception):
+            from gateway.lifecycle_ledger import sample_memory
+            snap.update(sample_memory())
+    return snap
+
+
 class _LoopLivenessWatchdogHandle:
     def __init__(self, stop_event: threading.Event, thread: threading.Thread):
         self._stop_event = stop_event
@@ -99,8 +152,10 @@ def start_loop_liveness_watchdog(
         strikes = 0
         last_success = time.perf_counter()
         cpu_at_success = time.process_time()
+        missed: list[_LivenessProbe] = []
         while not stop_event.wait(timeout=probe_interval):
-            probe_event = threading.Event()
+            probe_event = _LivenessProbe()
+            probe_event.sent_at = time.monotonic()
             try:
                 loop.call_soon_threadsafe(probe_event.set)
             except RuntimeError:  # normally closed loop: nothing left to backstop
@@ -120,6 +175,7 @@ def start_loop_liveness_watchdog(
                 strikes = 0
                 last_success = time.perf_counter()
                 cpu_at_success = time.process_time()
+                missed.clear()
                 continue
             if stop_event.is_set():  # re-checked before each irreversible step: a late stop() wins
                 return
@@ -132,7 +188,12 @@ def start_loop_liveness_watchdog(
                 "watchdog_elapsed_s": elapsed,
                 "process_cpu_elapsed_s": time.process_time() - cpu_at_success,
                 "thread_count": threading.active_count(),
+                # Per earlier miss in this streak: seconds until the loop finally ran it, or None
+                # if it never has. Numbers = slow-but-dispatching loop; all None = wedged loop.
+                "earlier_missed_probe_answered_after_s": [p.late_answer_s() for p in missed],
+                "host": _host_pressure_snapshot(),
             }
+            missed.append(probe_event)
             if strikes < max_strikes:
                 # A final stack alone cannot distinguish one fixed blocker from a loop
                 # making slow progress. Keep each missed-probe witness, off-loop and
@@ -146,8 +207,10 @@ def start_loop_liveness_watchdog(
             with contextlib.suppress(Exception):
                 logger.critical(
                     "Gateway event loop missed %d consecutive liveness probes; dumping all thread "
-                    "stacks and exiting with code %d so the service supervisor can restart it.",
-                    strikes, exit_code)
+                    "stacks and exiting with code %d so the service supervisor can restart it. "
+                    "Earlier misses answered after %s s (None = never); host %s",
+                    strikes, exit_code, snapshot["earlier_missed_probe_answered_after_s"],
+                    snapshot["host"])
             # File + stderr: a console-less launcher (Windows .vbs login item) discards stderr, so a
             # liveness death used to leave no stack anywhere (#120356, #91097).
             _write_watchdog_dump(
