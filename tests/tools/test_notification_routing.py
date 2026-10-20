@@ -74,6 +74,16 @@ def test_send_target_numeric_telegram_ids_untouched():
     assert (chat_id, thread_id, error) == ("-1001234567890", "17585", None)
 
 
+def test_hermes_send_entry_point_resolves_alias(monkeypatch):
+    # `hermes send --to telegram:markets` and the MCP send path enter through _resolve_tool_target.
+    from tools.send_message_tool import _resolve_tool_target
+    monkeypatch.setenv("TELEGRAM_MARKETS_CHAT_ID", "-100321")
+    assert _resolve_tool_target("telegram:markets") == ("telegram", "-100321", None, None)
+    platform, chat_id, _thread, error = _resolve_tool_target("telegram:home_all")
+    assert (platform, chat_id) == ("telegram", None)
+    assert "TELEGRAM_HOME_ALL_CHAT_ID" in error
+
+
 def test_alias_routing_is_telegram_only(monkeypatch):
     monkeypatch.setenv("TELEGRAM_MARKETS_CHAT_ID", "-100321")
     chat_id, _thread, _error = resolve_send_target("discord", "markets", pass_unresolved_references=True)

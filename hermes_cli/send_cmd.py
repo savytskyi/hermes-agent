@@ -244,8 +244,9 @@ def cmd_send(args: argparse.Namespace) -> None:
 _SEND_ARGUMENTS = (
     (("-t", "--to"), dict(metavar="TARGET", default=None, help=(
         "Delivery target. Format: 'platform' (home channel), "
-        "'platform:chat_id', 'platform:chat_id:thread_id', or "
-        "'platform:#channel-name'. Examples: telegram, "
+        "'telegram:<notification-alias>' (resolved via TELEGRAM_<ALIAS>_CHAT_ID; fails closed "
+        "when a reserved alias is unset), 'platform:chat_id', 'platform:chat_id:thread_id', or "
+        "'platform:#channel-name'. Examples: telegram, telegram:markets, "
         "telegram:-1001234567890:17585, discord:#ops, slack:C0123ABCD, signal:+15551234567."))),
     (("message",), dict(nargs="?", default=None, help="Message text. If omitted, read from --file or stdin.")),
     (("-f", "--file"), dict(metavar="PATH", default=None, help=(
