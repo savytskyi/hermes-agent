@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Resource-safe managed test runner — see scripts/safe_test.py and tests/AGENTS.md.
+# Picks an interpreter that has psutil: $HERMES_PYTHON, the checkout's .venv / venv, then python3.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+for candidate in "${HERMES_PYTHON:-}" "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/venv/bin/python" "$(command -v python3 || true)"; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" -c 'import psutil' 2>/dev/null; then
+    exec "$candidate" "$SCRIPT_DIR/safe_test.py" "$@"
+  fi
+done
+echo "[safe-test] no Python with psutil found (set HERMES_PYTHON)" >&2
+exit 2

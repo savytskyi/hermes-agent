@@ -140,7 +140,8 @@ Every former god file is a **facade** (public entry points + the names other pac
   helpers.
 - **Commits and PRs:** rebase onto `main` before merging (a squash from a stale branch silently
   reverts newer fixes); 1–2 invariant tests per fix, proven red on the base.
-- **Tests:** always `scripts/run_tests.sh`, never bare `pytest`; behaviour contracts, never
+- **Tests:** always `scripts/run_tests.sh`, never bare `pytest` — and agents run it through
+  `scripts/safe-test` (one run, one worker, bounded, fully reaped); behaviour contracts, never
   change-detectors or source-reading tests; host-specific behaviour is tested on that host with
   `@pytest.mark.platforms(...)`, never by faking `sys.platform`; tests never write to `~/.hermes/`.
   Everything else: `tests/AGENTS.md`.
