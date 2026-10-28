@@ -1,0 +1,23 @@
+name: homelab
+version: 2.0.0
+description: Safe local integrations for r1 home automation, cameras, media, books, food, finance, observability, and infrastructure
+provides_tools:
+  - homelab_ha
+  - homelab_influx
+  - homelab_grafana
+  - homelab_plex
+  - homelab_qbittorrent
+  - homelab_arr
+  - homelab_radarr_add_movie
+  - homelab_sonarr_add_series
+  - homelab_health
+  - homelab_frigate
+  - homelab_lazylibrarian
+  - homelab_calibre
+  - homelab_lidarr
+  - homelab_lidarr_add_artist
+  - homelab_bazarr
+  - homelab_prowlarr
+  - homelab_sure
+  - homelab_grocy
+  - homelab_infrastructure
