@@ -6,7 +6,7 @@ Validated 2026-10-28 on `r1.local`. No test performed a production write, downlo
 
 | Service | Authentication | Hermes surface | Read operations | Guarded write operations | Live result | Remaining action |
 |---|---|---|---|---|---|---|
-| Home Assistant | Long-lived token configured and accepted | `homelab_ha` | Entity list/search/get, weather/environment summaries, bounded REST history | Fixed `turn_on`, `turn_off`, `toggle`, cover and thermostat actions; entity must be allowlisted and `confirm=true` | Entity search and history passed | `HASS_CONTROL_ALLOWLIST` is intentionally empty; owner must choose device entity IDs before control is possible |
+| Home Assistant | Long-lived token configured and accepted | `homelab_ha` | Entity list/search/get, weather/environment summaries, bounded REST history | Fixed `turn_on`, `turn_off`, `toggle`, cover and thermostat actions; entity must be allowlisted and `confirm=true` | Entity search and history passed | Allowlist now contains only `light.yard_floodlight` (confirm=true required); add more entity IDs to `HASS_CONTROL_ALLOWLIST` in ~/.hermes/.env as desired |
 | Frigate | Chat authorization configured; local API needs no separate token | `homelab_frigate` | Camera/detector status, event search by camera/object/time, snapshot and clip retrieval | None | Blocked: container is stopped after an OOM kill and has no active port binding | Review camera/config memory use and explicitly start Frigate; then rerun read-only tests |
 | Plex | Existing local token is present but the server rejects it | `homelab_plex` | Identity/status, sessions/transcodes, bandwidth, libraries, search, recent, scan status | None | Server identity passed; authenticated library read returned HTTP 401 | Reclaim/sign in to the native Plex server so it issues a working token; do not disable Plex authentication |
 | Sonarr | Existing API key accepted | `homelab_arr`, `homelab_sonarr_add_series` | Queue, wanted, calendar, history, health, monitored library | Exact series add/search only; preview and explicit confirmation; no delete | Queue and health passed; add preview passed without writing | None |
@@ -35,7 +35,7 @@ Validated 2026-10-28 on `r1.local`. No test performed a production write, downlo
 
 - The plugin exposes fixed JSON schemas, not arbitrary URLs, SQL, Redis commands, MQTT topics, shell commands, Home Assistant service names, or container names.
 - Frigate checks the originating Hermes session and allows camera data only for configured Telegram chat IDs (plus local CLI sessions).
-- Home Assistant controls require both an explicit allowlist and `confirm=true`; the allowlist is currently empty, so control fails closed.
+- Home Assistant controls require both an explicit allowlist and `confirm=true`; only allowlisted entities (currently `light.yard_floodlight`) can be controlled; everything else fails closed.
 - Media/book/finance/food writes use previews or explicit confirmation. Destructive account, transaction, media, camera, database, and bulk-edit operations are absent.
 - Secrets stay in the existing Hermes profile `.env`; tools redact error details that could contain credentials. No secret values are committed.
 - Runtime plugin path `~/.hermes/plugins/homelab` is a symlink to this version-controlled tree, so code survives Hermes application updates and is covered with the development repository/host backups.
@@ -48,3 +48,11 @@ Validated 2026-10-28 on `r1.local`. No test performed a production write, downlo
 - Read-only live checks passed for Home Assistant, InfluxDB, Grafana, qBittorrent, Sonarr, Radarr, Lidarr, Bazarr, Prowlarr, LazyLibrarian, Calibre, Sure, Grocy, TimescaleDB, Redis, Mosquitto, Homarr, Aurboda and Cooklang.
 - Write paths were validated only through guards/previews and unit tests.
 - Known live failures are Frigate availability (stopped after OOM) and Plex authenticated access (401 with the server's current stored token).
+
+
+## Re-validation 2026-10-28 (afternoon)
+
+- Pasted HA token and Bazarr key were verified identical to the stored values (HA /api/ 200, Bazarr status 200); no credential changes were needed.
+- Frigate container: exited with OOMKilled=true and no memory limit; not restarted (needs owner decision). HA's Frigate-integration entities are `unavailable` as a result.
+- Plex: /library/sections still 401.
+- Plugin Doctor 19 tools OK; 14/14 safety tests pass; live read-only suite passes except Frigate and Plex libraries.
