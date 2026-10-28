@@ -41,8 +41,9 @@ Validated 2026-10-28 on `r1.local`. No test performed a production write, downlo
 - Runtime plugin path `~/.hermes/plugins/homelab` is a symlink to this version-controlled tree, so code survives Hermes application updates and is covered with the development repository/host backups.
 - No Docker socket was added to any service, no authentication was weakened, and no new public port was created.
 
-## Validation
+## Activation and validation
 
+- Plugin Doctor loads and registers all 19 tools. The long-running gateway still has the prior 9-tool plugin snapshot and must be restarted from an external shell or Telegram `/restart`; the gateway correctly blocks self-restart from an in-process tool call.
 - Unit/safety suite: 14/14 passed.
 - Read-only live checks passed for Home Assistant, InfluxDB, Grafana, qBittorrent, Sonarr, Radarr, Lidarr, Bazarr, Prowlarr, LazyLibrarian, Calibre, Sure, Grocy, TimescaleDB, Redis, Mosquitto, Homarr, Aurboda and Cooklang.
 - Write paths were validated only through guards/previews and unit tests.
